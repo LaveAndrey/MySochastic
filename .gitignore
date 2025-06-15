@@ -1,0 +1,5 @@
+.env
+positions.db
+signals.db
+credentials.json
+вф.py
