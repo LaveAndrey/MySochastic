@@ -112,7 +112,7 @@ def log_position(symbol, position_type, price, timestamp, order_id):
         print(f"[ERROR] 🔥 Ошибка записи позиции: {str(e)}")
         raise
 
-def place_buy_order(trade_api, account_api, market_api, symbol_dontclear, current_price, symbol, amount_usdt,
+def place_buy_order(trade_api, account_api, market_api, current_price, symbol, amount_usdt,
                     timestamp=None):
     """Размещение ордера на покупку с выводом через print"""
     print(f"[INFO] Начало процесса покупки {symbol} на сумму {amount_usdt} USDT")
@@ -121,7 +121,7 @@ def place_buy_order(trade_api, account_api, market_api, symbol_dontclear, curren
         timestamp = datetime.now().isoformat()
         print(f"[DEBUG] Установлено время операции: {timestamp}")
 
-    formatted_symbol = symbol.replace("-", "/")
+    formatted_symbol = symbol
     print(f"[DEBUG] Форматированный символ: {formatted_symbol}")
 
     if has_open_position(formatted_symbol):

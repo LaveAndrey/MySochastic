@@ -32,26 +32,28 @@ PASSPHRASE = os.getenv('PASSPHRASE_DEMO')
 IS_DEMO = True
 
 
-trade_api = TradeAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO)
-account_api = AccountAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO)
-market_api = MarketAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO)
+trade_api = TradeAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
+account_api = AccountAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
+market_api = MarketAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
 position_monitor = PositionMonitor(trade_api, account_api, market_api)
 
 def handle_ws_message(data):
     if "data" not in data:
         return
     for ticker in data["data"]:
-        symbol = ticker["instId"].replace("-USDT", "")
+        symbol = ticker["instId"]
         current_price = Decimal(ticker["last"])
         # Передаем данные в PositionMonitor
+        print(f"WebSocket: {ticker['instId']} = {ticker['last']}")
         position_monitor._check_position(symbol, current_price)
+
 
 
 # === Конфигурация ===
 INTERVAL = '1m'
 K_PERIOD = 14
 TIMEZONE = pytz.timezone('Europe/Moscow')
-UPDATE_TIMES = [dtime(19, 0), dtime(19, 1), dtime(18, 20), dtime(12, 17)]
+UPDATE_TIMES = [dtime(0, 56), dtime(0, 58), dtime(1, 0), dtime(1, 2)]
 DB_NAME = "signals.db"
 COINS_FILE = "coins_list"
 MAX_WORKERS = 10
@@ -83,13 +85,16 @@ def log(message: str, level: str = "info"):
     print(f"{icons.get(level, '')} [{timestamp}] {message}")
 
 # === Загрузка монет ===
-def load_symbols() -> List[str]:
+def is_valid_pair(symbol):
     try:
-        with open(COINS_FILE, "r") as f:
-            return [line.strip().upper() for line in f if line.strip()]
-    except Exception as e:
-        log(f"Ошибка загрузки символов: {e}", "error")
-        return []
+        url = f"https://api.binance.com/api/v3/exchangeInfo?symbol={symbol}USDT"
+        return requests.get(url).status_code == 200
+    except:
+        return False
+
+def load_symbols():
+    with open(COINS_FILE) as f:
+        return [s.strip() for s in f if is_valid_pair(s.strip())]
 
 
 # === Получение данных с Binance ===
@@ -153,10 +158,13 @@ def send_signal_message(symbol: str, signal: str, k_prev: float, k_curr: float, 
         if signal == "BUY":
             current_price = get_current_price(symbol)
             okx_symbol = f"{symbol}-USDT"
-            success = place_buy_order(trade_api, account_api, market_api, symbol, current_price, okx_symbol,
+            success = place_buy_order(trade_api, account_api, market_api, symbol, okx_symbol,
                                       amount_usdt=10, timestamp=datetime.now().isoformat())
             if success:
                 log(f"{symbol}: 🟢 Открыта позиция по {current_price}", "success")
+                time.sleep(0.5)
+                position_monitor._check_position(okx_symbol, current_price)
+
 
     except Exception as e:
         log(f"{symbol}: ❌ Ошибка: {e}", "error")
@@ -213,17 +221,22 @@ def wait_until_next_update():
 # === Основной цикл ===
 def main():
     try:
-        position_monitor.start()
-        symbols = load_symbols()
-        ws_manager = CustomWebSocket(symbols, handle_ws_message)
-        ws_thread = ws_manager.run_in_thread()
-        wait_until_next_update()
         init_db()
-        log("✅ Мониторинг позиций запущен (проверка каждую минуту)", "success")
+        wait_until_next_update()
+        symbols = load_symbols()
+        okx_symbols = [f"{s}-USDT" for s in symbols]
 
-        #wait_until_next_update()
+        # Инициализация WebSocket
+        ws_manager = CustomWebSocket(
+            symbols=okx_symbols,
+            callback=handle_ws_message,
+        )
+        ws_thread = ws_manager.run_in_thread()
+        log("✅ Мониторинг-WebSocket позиций запущен (проверка каждую минуту)", "success")
+
         while True:
             log("Начинаем обновление...")
+
             symbols = load_symbols()
             if not symbols:
                 log("Список символов пуст. Ожидаем...", "warning")
@@ -236,18 +249,31 @@ def main():
 
             analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message)
 
-            # Проверяем и закрываем позиции по условиям
+            # Проверка только по тем символам, у которых реально есть открытая позиция
+            with sqlite3.connect("positions.db") as conn:
+                open_positions = conn.execute("""
+                    SELECT symbol FROM positions WHERE closed = 0
+                """).fetchall()
+
+                for row in open_positions:
+                    symbol = row[0]
+                    try:
+                        current_price = get_current_price(symbol.replace("-USDT", ""))
+                        if current_price:
+                            position_monitor._check_position(symbol, Decimal(current_price))
+                    except Exception as e:
+                        log(f"Ошибка проверки позиции {symbol}: {e}", "error")
 
             wait_until_next_update()
     except KeyboardInterrupt:
-            log("Получен сигнал остановки", "warning")
+        log("Получен сигнал остановки", "warning")
     except Exception as e:
         log(f"КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", "error")
     finally:
-        position_monitor.stop()
         ws_manager.stop()
         log("Мониторинг позиций остановлен", "info")
         log("Работа бота завершена", "success")
+
 
 if __name__ == "__main__":
     main()
