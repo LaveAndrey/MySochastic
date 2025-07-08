@@ -6,3 +6,5 @@ credentials.json
 вф.py
 ADWE.py
 coins_list
+__pycache__
+.idea
