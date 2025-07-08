@@ -1,5 +1,8 @@
 .env
 positions.db
 signals.db
+timers.db
 credentials.json
 вф.py
+ADWE.py
+coins_list

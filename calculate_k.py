@@ -1,5 +1,5 @@
 import pandas as pd
-from typing import Optional, List, Tuple
+from typing import Optional, Tuple
 from datetime import datetime
 def calculate_k(symbol: str, df: pd.DataFrame, K_PERIOD, log) -> Tuple[Optional[float], Optional[datetime]]:
     if len(df) < K_PERIOD + 1:

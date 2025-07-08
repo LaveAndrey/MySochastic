@@ -1,21 +1,12 @@
-import os
 import time
 import sqlite3
 import requests
-import pandas as pd
-from datetime import datetime, time as dtime
-import pytz
-from typing import Optional, List, Tuple
+from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
-from telegram import Bot
-import asyncio
 from get_klines import get_klines
 from calculate_k import calculate_k
 from analytiv import analyze_pairs
-from okx_bot import (
-    init_db, has_open_position, get_price,
-    log_position, place_buy_order
-)
+from okx_bot import init_db, place_buy_order, place_sell_order
 from dotenv import load_dotenv
 from okx.Trade import TradeAPI
 from okx.Account import AccountAPI
@@ -23,47 +14,85 @@ from okx.MarketData import MarketAPI
 from webdocket.Websocket_manager import CustomWebSocket
 from position_monitor import PositionMonitor
 from decimal import *
+from config import (API_KEY_DEMO as API_KEY,
+                    API_SECRET_DEMO as API_SECRET,
+                    PASSPHRASE_DEMO as PASSPHRASE,
+                    TIMEZONE,
+                    COINS_FILE,
+                    DB_NAME,
+                    INTERVAL,
+                    K_PERIOD,
+                    MAX_WORKERS,
+                    IS_DEMO,
+                    AMOUNT_USDT,
+                    LEVERAGE,
+                    CLOSE_AFTER_MINUTES,
+                    PROFIT_PERCENT,
+                    CREDS_FILE,
+                    SHEET_ID)
+from utils import send_telegram_message
+from TimerStorage import TimerStorage
+from googlesheets import GoogleSheetsLogger
+from Liquidation import LiquidationChecker
+from notoficated import send_position_closed_message
 
 load_dotenv()
+if SHEET_ID:
+    try:
+        sheet_logger = GoogleSheetsLogger(CREDS_FILE, SHEET_ID)
+        print(f"Google Sheets Logger инициализирован. Рабочий лист: {sheet_logger.sheet.title}")
+    except Exception as e:
+        print(f"Ошибка инициализации Google Sheets: {str(e)}")
+        sheet_logger = None
+else:
+    sheet_logger = None
 
-API_KEY = os.getenv('API_KEY_DEMO')
-API_SECRET = os.getenv('API_SECRET_DEMO')
-PASSPHRASE = os.getenv('PASSPHRASE_DEMO')
-IS_DEMO = True
-
-
+timer_storage = TimerStorage()
 trade_api = TradeAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
 account_api = AccountAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
 market_api = MarketAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
-position_monitor = PositionMonitor(trade_api, account_api, market_api)
+position_monitor1 = PositionMonitor(trade_api, account_api, market_api, close_after_minutes=CLOSE_AFTER_MINUTES, profit_threshold=PROFIT_PERCENT, timer_storage=timer_storage, sheet_logger=sheet_logger)
+
+
 
 def handle_ws_message(data):
     if "data" not in data:
         return
+
+    # Оптимизация: получаем все активные позиции одним запросом
+    active_positions = set()
+    try:
+        with sqlite3.connect("positions.db") as conn:
+            conn.row_factory = sqlite3.Row  # Для доступа по имени столбца
+            # SPOT + SHORT позиции одним запросом
+            cursor = conn.execute("""
+                SELECT symbol FROM (
+                    SELECT symbol FROM spot_positions WHERE closed=0
+                    UNION ALL
+                    SELECT symbol FROM short_positions WHERE closed=0
+                )
+            """)
+            active_positions = {row['symbol'] for row in cursor}
+    except Exception as e:
+        print(f"Ошибка получения позиций: {e}")
+        return
+
+    # Обрабатываем только тикеры с активными позициями
     for ticker in data["data"]:
-        symbol = ticker["instId"]
-        current_price = Decimal(ticker["last"])
-        # Передаем данные в PositionMonitor
-        print(f"WebSocket: {ticker['instId']} = {ticker['last']}")
-        position_monitor._check_position(symbol, current_price)
+        try:
+            symbol = ticker["instId"]
+            if "-SWAP" not in symbol:  # Пропускаем SPOT-тикеры
+                continue
 
-
-
-# === Конфигурация ===
-INTERVAL = '1m'
-K_PERIOD = 14
-TIMEZONE = pytz.timezone('Europe/Moscow')
-UPDATE_TIMES = [dtime(0, 56), dtime(0, 58), dtime(1, 0), dtime(1, 2)]
-DB_NAME = "signals.db"
-COINS_FILE = "coins_list"
-MAX_WORKERS = 10
-
-# === Telegram Bot config ===
-TELEGRAM_TOKEN = "7729090833:AAExQZN8WQUoI0RBeNPRqxnRZzlQRpqn-s4"
-TELEGRAM_CHAT_ID = "-1002782313628"
-bot = Bot(token=TELEGRAM_TOKEN)
-
-
+            current_price = Decimal(ticker["last"])
+            import threading
+            threading.Thread(
+                target=position_monitor1._check_position,
+                args=(symbol, current_price),
+                daemon=True
+            ).start()
+        except Exception as e:
+            print(f"Ошибка обработки {symbol}: {e}")
 # === Логгер ===
 
 def get_current_price(symbol: str) -> float:  # ✅ нормализация
@@ -85,16 +114,55 @@ def log(message: str, level: str = "info"):
     print(f"{icons.get(level, '')} [{timestamp}] {message}")
 
 # === Загрузка монет ===
-def is_valid_pair(symbol):
+def is_valid_pair_okx(symbol):
+    """Проверяет, существует ли торговая пара на OKX"""
     try:
-        url = f"https://api.binance.com/api/v3/exchangeInfo?symbol={symbol}USDT"
-        return requests.get(url).status_code == 200
-    except:
+        inst_id = f"{symbol}-USDT"
+        url = f"https://www.okx.com/api/v5/public/instruments?instType=SPOT"
+        response = requests.get(url, timeout=10)
+        if response.status_code != 200:
+            log(f"Ошибка запроса к OKX (код {response.status_code})", "error")
+            return False
+
+        data = response.json()
+        if data.get("code") != "0":
+            log(f"Ошибка OKX API: {data.get('msg', 'нет сообщения')}", "error")
+            return False
+
+        instruments = data.get("data", [])
+        if any(inst["instId"] == inst_id for inst in instruments):
+            return True
+        else:
+            log(f"Пара {inst_id} не найдена на OKX", "warning")
+            return False
+    except Exception as e:
+        log(f"Ошибка проверки пары {symbol}-USDT на OKX: {str(e)}", "error")
         return False
 
+
+
 def load_symbols():
-    with open(COINS_FILE) as f:
-        return [s.strip() for s in f if is_valid_pair(s.strip())]
+    """Загружает список символов из файла и проверяет их доступность на бирже"""
+    try:
+        with open(COINS_FILE) as f:
+            all_symbols = [s.strip() for s in f.readlines()]
+            valid_symbols = []
+            invalid_symbols = []
+
+            for symbol in all_symbols:
+                if is_valid_pair_okx(symbol):
+                    valid_symbols.append(symbol)
+                else:
+                    invalid_symbols.append(symbol)
+
+            if invalid_symbols:
+                log(f"Следующие символы не найдены на бирже: {', '.join(invalid_symbols)}", "warning")
+
+            log(f"Загружено {len(valid_symbols)} валидных символов из {len(all_symbols)}", "info")
+            return valid_symbols
+    except Exception as e:
+        log(f"Ошибка загрузки символов: {str(e)}", "error")
+        return []
 
 
 # === Получение данных с Binance ===
@@ -104,25 +172,24 @@ def load_symbols():
 # === Сохранение %K в БД (без сигнала) ===
 def save_to_db(symbol: str, timestamp: str, k: float):
     try:
-        now = datetime.now(TIMEZONE)
-        table_name = f"signals_{now.strftime('%Y_%m_%d')}"
         with sqlite3.connect(DB_NAME) as conn:
-            # Создаём таблицу, даже если данных нет
-            conn.execute(f"""
-                CREATE TABLE IF NOT EXISTS "{table_name}" (
+            # Создаём единую таблицу для всех данных
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     symbol TEXT,
                     timestamp TEXT,
                     k_value REAL,
-                    processed INTEGER DEFAULT 0
+                    processed INTEGER DEFAULT 0,
+                    date TEXT  -- Добавляем поле для даты, если нужно фильтровать по дням
                 );
             """)
             if k is not None:  # Добавляем запись только если есть данные
-                conn.execute(f"""
-                    INSERT INTO "{table_name}" (symbol, timestamp, k_value)
-                    VALUES (?, ?, ?)
-                """, (symbol, timestamp, k))
-        log(f"{symbol}: ✅ Сохранено в {table_name} | %K={k:.2f}", "success")
+                conn.execute("""
+                    INSERT INTO signals (symbol, timestamp, k_value, date)
+                    VALUES (?, ?, ?, ?)
+                """, (symbol, timestamp, k, datetime.now(TIMEZONE).strftime('%Y-%m-%d')))
+        log(f"{symbol}: ✅ Сохранено в signals | %K={k:.2f}", "success")
     except Exception as e:
         log(f"{symbol}: ❌ Ошибка сохранения в БД: {e}", "error")
 
@@ -143,48 +210,59 @@ def determine_signal(k_prev: float, k_curr: float) -> str:
         return "HOLD"
 
 # === Отправка сообщения в Telegram с сигналом ===
-
 def send_signal_message(symbol: str, signal: str, k_prev: float, k_curr: float, ts_prev: str, ts_curr: str):
-    arrows = "📈" if signal == "BUY" else "📉" if signal == "SELL" else "➡️"
-    signal_emoji = "🟢 Покупка" if signal == "BUY" else "🟡 Держать"  # Убрали "🔴 Продажа"
+    # Отправляем только BUY/SELL сигналы
+    if signal == "HOLD":
+        return  # Игнорируем сигналы HOLD
 
-    message = (
-        f"ℹ️ *Информация по {symbol}*\n"
-        f"%K изменился: {k_prev:.2f} → {k_curr:.2f} {arrows}\n"
-        f"Действие: *{'Покупка' if signal == 'BUY' else 'Держим'}*"
+    arrows = "📈" if signal == "BUY" else "📉"
+    signal_emoji = "🟢 Покупка" if signal == "BUY" else "🔴 Продажа"
+
+    signal_text = (
+        f"📊 *Сигнал по {symbol}*\n"
+        f"%K: {k_prev:.2f} → {k_curr:.2f} {arrows}\n"
+        f"Рекомендация: *{signal_emoji}*\n"
+        f"Плечо: {'4x' if signal == 'SELL' else '1x'}"
     )
+    send_telegram_message(signal_text)
 
     try:
         if signal == "BUY":
-            current_price = get_current_price(symbol)
-            okx_symbol = f"{symbol}-USDT"
-            success = place_buy_order(trade_api, account_api, market_api, symbol, okx_symbol,
-                                      amount_usdt=10, timestamp=datetime.now().isoformat())
-            if success:
-                log(f"{symbol}: 🟢 Открыта позиция по {current_price}", "success")
-                time.sleep(0.5)
-                position_monitor._check_position(okx_symbol, current_price)
+            success = place_buy_order(
+                trade_api=trade_api,
+                account_api=account_api,
+                market_api=market_api,
+                symbol=symbol,
+                amount_usdt=AMOUNT_USDT,
+                position_monitor=position_monitor1,
+                timestamp=datetime.now().isoformat()
+            )
+        elif signal == "SELL":
+            success = place_sell_order(
+                trade_api=trade_api,
+                account_api=account_api,
+                market_api=market_api,
+                symbol=symbol,
+                amount_usdt=AMOUNT_USDT,
+                position_monitor=position_monitor1,
+                timestamp=datetime.now().isoformat(),
+                leverage=LEVERAGE
+            )
 
+        if success:
+            entry_message = (
+                f"{'🟢' if signal == 'BUY' else '🔴'} *Открыта позиция*\n"
+                f"📌 Инструмент: `{symbol}`\n"
+                f"💵 Сумма: *10 USDT*\n"
+                f"📊 Плечо: *{'4x' if signal == 'SELL' else '1x'}*\n"
+                f"⏰ Время: {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}"
+            )
+            send_telegram_message(entry_message)
+            log(f"{symbol}: {'🟢' if signal == 'BUY' else '🔴'} Позиция открыта", "success")
 
     except Exception as e:
         log(f"{symbol}: ❌ Ошибка: {e}", "error")
 
-
-async def _send_message_async(text: str):
-    try:
-        await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=text, parse_mode="Markdown")
-    except Exception as e:
-        log(f"❌ Ошибка отправки в Telegram: {e}", "error")
-
-
-def send_telegram_message(text: str):
-    try:
-        asyncio.run(_send_message_async(text))
-    except RuntimeError:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(_send_message_async(text))
-        loop.close()
 
 
 
@@ -193,84 +271,148 @@ def send_telegram_message(text: str):
 
 # === Обработка одной монеты ===
 def process_symbol(symbol: str):
-    df = get_klines(symbol, log, TIMEZONE, INTERVAL, K_PERIOD)
-    if df is None:
+    """Обрабатывает один символ и возвращает статус обработки"""
+    try:
+        log(f"Начинаем обработку символа: {symbol}", "debug")
+        time.sleep(0.3)
+        df = get_klines(symbol, log, TIMEZONE, INTERVAL, K_PERIOD)
+        if df is None:
+            log(f"Не удалось получить данные для {symbol}", "warning")
+            return "error"
+
+        k, ts = calculate_k(symbol, df, K_PERIOD, log)
+        if k is None or ts is None:
+            log(f"Не удалось рассчитать %K для {symbol}", "warning")
+            return "warning"
+
+        save_to_db(symbol, ts.isoformat(), k)
+        log(f"Символ {symbol} успешно обработан (K={k:.2f})", "success")
+        return "success"
+    except Exception as e:
+        log(f"Критическая ошибка обработки {symbol}: {str(e)}", "error")
         return "error"
 
-    k, ts = calculate_k(symbol, df, K_PERIOD, log)
-    if k is None or ts is None:
-        return "warning"
-
-    save_to_db(symbol, ts.isoformat(), k)
-    return "success"
-
 # === Ожидание следующего запуска ===
-def wait_until_next_update():
+#def wait_until_next_update():
+#    now = datetime.now(TIMEZONE)
+#    next_update = min(
+#        (TIMEZONE.localize(datetime.combine(now.date(), t))
+#         for t in UPDATE_TIMES
+#         if TIMEZONE.localize(datetime.combine(now.date(), t)) > now),
+#        default=TIMEZONE.localize(datetime.combine(now.date() + pd.Timedelta(days=1), UPDATE_TIMES[0]))
+#    )
+#    wait_seconds = (next_update - now).total_seconds()
+#    log(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+#    time.sleep(wait_seconds)
+
+def wait_until_next_update(interval_minutes=3):
     now = datetime.now(TIMEZONE)
-    next_update = min(
-        (TIMEZONE.localize(datetime.combine(now.date(), t))
-         for t in UPDATE_TIMES
-         if TIMEZONE.localize(datetime.combine(now.date(), t)) > now),
-        default=TIMEZONE.localize(datetime.combine(now.date() + pd.Timedelta(days=1), UPDATE_TIMES[0]))
-    )
+    # Находим ближайшепппе время, кратное interval_minutes
+    minute = (now.minute // interval_minutes + 1) * interval_minutes
+    if minute >= 60:
+        next_update = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+    else:
+        next_update = now.replace(minute=minute, second=0, microsecond=0)
+
     wait_seconds = (next_update - now).total_seconds()
-    log(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+    print(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+
     time.sleep(wait_seconds)
+
 
 
 # === Основной цикл ===
 def main():
     try:
-        init_db()
+        print("Инициализация БД...")
+        init_db()  # Должен быть ПЕРВЫМ вызовом
+        print("БД инициализирована.")
+
+        # Проверка создания таблиц
+        with sqlite3.connect(DB_NAME) as conn:
+            tables = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            print(f"Таблицы в БД: {tables}")
+        time.sleep(1)
+        position_monitor = position_monitor1
+        #position_monitor.sync_positions_with_exchange()
+        liquidation_checker = LiquidationChecker(
+            account_api=account_api,
+            on_position_closed=send_position_closed_message,
+            sheet_logger=sheet_logger,
+            timer_storage=timer_storage
+        )
         wait_until_next_update()
-        symbols = load_symbols()
-        okx_symbols = [f"{s}-USDT" for s in symbols]
+        #symbols = load_symbols()
+        #okx_symbols = [f"{s}-USDT-SWAP" for s in symbols]  # Только SWAP-контракты
 
         # Инициализация WebSocket
-        ws_manager = CustomWebSocket(
-            symbols=okx_symbols,
-            callback=handle_ws_message,
-        )
-        ws_thread = ws_manager.run_in_thread()
-        log("✅ Мониторинг-WebSocket позиций запущен (проверка каждую минуту)", "success")
+        #ws_manager = CustomWebSocket(
+        #    symbols=okx_symbols,
+        #    callback=handle_ws_message,
+        #    position_monitor=position_monitor
+        #)
+        #ws_thread = ws_manager.start()
+        #liquidation_ws = LiquidationWebSocket(
+        #    api_key=API_KEY,
+        #    api_secret=API_SECRET,
+        #    api_passphrase=PASSPHRASE,
+        #    position_monitor=position_monitor,
+        #    IS_DEMO_AT=IS_DEMO
+        #)
+        #liquidation_ws.start()
+        #log("✅ Мониторинг-WebSocket позиций запущен (проверка каждую минуту)", "success")
 
         while True:
+            liquidation_checker.check()
             log("Начинаем обновление...")
 
+            # Загружаем и проверяем символы
             symbols = load_symbols()
             if not symbols:
-                log("Список символов пуст. Ожидаем...", "warning")
+                log("Нет валидных символов для обработки. Ожидаем...", "warning")
                 time.sleep(60)
                 continue
 
+            # Обрабатываем символы с логированием результатов
+            success_count = 0
+            warning_count = 0
+            error_count = 0
+
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
                 results = list(executor.map(process_symbol, symbols))
-                log(f"Обработано {len([r for r in results if r == 'success'])}/{len(symbols)} символов", "info")
+
+                for result in results:
+                    if result == "success":
+                        success_count += 1
+                    elif result == "warning":
+                        warning_count += 1
+                    else:
+                        error_count += 1
+
+            # Отправляем сводку по обработке
+            summary_msg = (
+                f"📊 Итоги обработки:\n"
+                f"✅ Успешно: {success_count}\n"
+                f"⚠️ С предупреждениями: {warning_count}\n"
+                f"❌ С ошибками: {error_count}\n"
+                f"Всего символов: {len(symbols)}"
+            )
+            log(summary_msg, "info")
 
             analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message)
-
-            # Проверка только по тем символам, у которых реально есть открытая позиция
-            with sqlite3.connect("positions.db") as conn:
-                open_positions = conn.execute("""
-                    SELECT symbol FROM positions WHERE closed = 0
-                """).fetchall()
-
-                for row in open_positions:
-                    symbol = row[0]
-                    try:
-                        current_price = get_current_price(symbol.replace("-USDT", ""))
-                        if current_price:
-                            position_monitor._check_position(symbol, Decimal(current_price))
-                    except Exception as e:
-                        log(f"Ошибка проверки позиции {symbol}: {e}", "error")
-
             wait_until_next_update()
+
     except KeyboardInterrupt:
         log("Получен сигнал остановки", "warning")
+        position_monitor.stop_all_timers()
+        #liquidation_ws.stop()
+        #ws_manager.stop()
     except Exception as e:
         log(f"КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", "error")
     finally:
-        ws_manager.stop()
+        timer_storage.close()
+        #ws_manager.stop()
+        #liquidation_ws.stop()
         log("Мониторинг позиций остановлен", "info")
         log("Работа бота завершена", "success")
 

@@ -5,19 +5,19 @@ from datetime import datetime
 def analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message):
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
-        today_table = f"signals_{datetime.now(TIMEZONE).strftime('%Y_%m_%d')}"
 
-        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name=?", (today_table,))
+        # Используем единую таблицу signals вместо daily таблиц
+        cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='signals'")
         if not cursor.fetchone():
-            log(f"Таблица {today_table} не найдена для анализа", "warning")
+            log("Таблица signals не найдена для анализа", "warning")
             return
 
-        cursor.execute(f"SELECT DISTINCT symbol FROM '{today_table}'")
+        cursor.execute("SELECT DISTINCT symbol FROM signals")
         symbols = [row[0] for row in cursor.fetchall()]
 
         for symbol in symbols:
-            cursor.execute(f"""
-                SELECT id, timestamp, k_value FROM '{today_table}'
+            cursor.execute("""
+                SELECT id, timestamp, k_value FROM signals
                 WHERE symbol=?
                 ORDER BY timestamp DESC
                 LIMIT 2

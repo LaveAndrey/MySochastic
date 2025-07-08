@@ -1,69 +1,145 @@
 import sqlite3
 from datetime import datetime
+from decimal import ROUND_DOWN
+from decimal import Decimal
+from typing import Tuple
 
-DB_NAME = "positions.db"
+import os
+DB_NAME = os.path.abspath("positions.db")  # Путь будет одинаковым везде
 
 def init_db():
-    """Инициализация базы данных с выводом через print"""
+    """Инициализация базы данных с отдельными таблицами для SPOT и SHORT позиций"""
     try:
-        print(f"[INFO] 🔧 Начало инициализации БД {DB_NAME}")
+        print(f"[INFO] 🔧 Начинаем инициализацию БД: {DB_NAME}")
         with sqlite3.connect(DB_NAME) as conn:
-            table_info = conn.execute("""
-                SELECT name, sql FROM sqlite_master 
-                WHERE type='table' AND name='positions'
-            """).fetchone()
+            # Таблица для SPOT-позиций
+            print("[INFO] 🔍 Проверяем таблицу spot_positions...")
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS spot_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT,
+                entry_price REAL,
+                entry_time TEXT,
+                exit_price REAL,
+                exit_time TEXT,
+                pnl_percent REAL,
+                pnl_usdt REAL,
+                amount REAL,
+                order_id TEXT,
+                closed INTEGER DEFAULT 0,
+                maker_fee REAL DEFAULT 0,
+                taker_fee REAL DEFAULT 0,
+                maker_fee_usdt REAL DEFAULT 0,
+                taker_fee_usdt REAL DEFAULT 0,
+                reason TEXT DEFAULT NULL
+            )
+            """)
+            print("[INFO] ✅ Таблица spot_positions готова")
 
-            if not table_info:
-                print("[INFO] 🆕 Таблица positions не найдена, создаем новую...")
-                conn.execute("""
-                    CREATE TABLE positions (
-                        id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        symbol TEXT UNIQUE,
-                        position_type TEXT,
-                        entry_price REAL,
-                        entry_time TEXT,
-                        order_id TEXT,
-                        closed INTEGER DEFAULT 0
-                    );
-                """)
-                conn.execute("CREATE INDEX idx_symbol ON positions(symbol)")
-                print("[INFO] ✅ Таблица positions успешно создана")
-                print("[DEBUG] Структура таблицы:\n"
-                      "id INTEGER PRIMARY KEY\n"
-                      "symbol TEXT UNIQUE\n"
-                      "position_type TEXT\n"
-                      "entry_price REAL\n"
-                      "entry_time TEXT\n"
-                      "order_id TEXT\n"
-                      "closed INTEGER DEFAULT 0")
-            else:
-                print(f"[INFO] ℹ️ Таблица positions уже существует (структура: {table_info[1]})")
+            # Таблица для SHORT (маржинальных) позиций
+            print("[INFO] 🔍 Проверяем таблицу short_positions...")
+            conn.execute("""
+            CREATE TABLE IF NOT EXISTS short_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT ,
+                entry_price REAL,
+                entry_time TEXT,
+                exit_price REAL,
+                exit_time TEXT,
+                pnl_percent REAL,
+                pnl_usdt REAL,
+                order_id TEXT,
+                closed INTEGER DEFAULT 0,
+                leverage INTEGER DEFAULT 1,
+                amount REAL,
+                side TEXT,
+                maker_fee REAL DEFAULT 0,
+                taker_fee REAL DEFAULT 0,
+                maker_fee_usdt REAL DEFAULT 0,
+                taker_fee_usdt REAL DEFAULT 0,
+                reason TEXT DEFAULT NULL
+            )
+            """)
+            print("[INFO] ✅ Таблица short_positions готова")
 
-        print(f"[INFO] 🏁 База данных {DB_NAME} готова к работе")
+
+        print(f"[INFO] 🏁 База данных {DB_NAME} полностью готова к работе")
+
     except Exception as e:
-        print(f"[ERROR] 🔥 Критическая ошибка инициализации БД: {str(e)}")
+        print(f"[ERROR] 🔥 Критическая ошибка при инициализации БД: {e}")
+
+
+def get_trade_fee(account_api, inst_id: str) -> dict:
+    """
+    Получить комиссии maker и taker для инструмента OKX.
+    Автоматически определяет instType по inst_id.
+
+    :param account_api: API аккаунта OKX
+    :param inst_id: Например, "BTC-USDT" или "BTC-USDT-SWAP"
+    :return: dict с ключами 'maker' и 'taker' (Decimal), например {'maker': Decimal('0.0005'), 'taker': Decimal('0.001')}
+    """
+    try:
+        # Определяем тип инструмента по окончанию inst_id
+        if inst_id.endswith("-SWAP"):
+            inst_type = "SWAP"
+        else:
+            inst_type = "SPOT"
+
+        response = account_api.get_fee_rates(instType=inst_type, instId=inst_id)
+
+        if response.get("code") == "0" and response.get("data"):
+            fee_info = response["data"][0]
+            maker_fee = Decimal(fee_info.get("makerFeeRate", "0"))
+            taker_fee = Decimal(fee_info.get("takerFeeRate", "0"))
+            print(response)
+            return {"maker": maker_fee, "taker": taker_fee}
+        else:
+            print(f"[WARNING] Не удалось получить комиссии для {inst_id}: {response}")
+            return {"maker": Decimal("0"), "taker": Decimal("0")}
+    except Exception as e:
+        print(f"[ERROR] Ошибка получения комиссии: {e}")
+        return {"maker": Decimal("0"), "taker": Decimal("0")}
+
+
 
 def has_open_position(symbol):
-    """Проверка наличия открытой позиции с выводом через print"""
+    """Проверка наличия открытой позиции в обеих таблицах: spot и short"""
     print(f"[DEBUG] 🔍 Проверяем открытые позиции для {symbol}")
     try:
         with sqlite3.connect(DB_NAME) as conn:
-            result = conn.execute("""
-                SELECT COUNT(*) FROM positions 
+            # Проверка в SPOT
+            spot_result = conn.execute("""
+                SELECT COUNT(*) FROM spot_positions 
                 WHERE symbol=? AND closed=0
-            """, (symbol,)).fetchone()
+            """, (symbol,)).fetchone()[0]
 
-            if result[0] > 0:
-                print(f"[INFO] ⛔ Обнаружена открытая позиция по {symbol}")
+            # Проверка в SHORT
+            short_result = conn.execute("""
+                SELECT COUNT(*) FROM short_positions 
+                WHERE symbol=? AND closed=0
+            """, (symbol,)).fetchone()[0]
+
+            if spot_result > 0:
                 details = conn.execute("""
-                    SELECT entry_price, entry_time FROM positions 
+                    SELECT entry_price, entry_time FROM spot_positions 
                     WHERE symbol=? AND closed=0 LIMIT 1
                 """, (symbol,)).fetchone()
-                print(f"[DEBUG] Детали позиции {symbol}: цена входа={details[0]}, время={details[1]}")
-            else:
+                print(f"[INFO] ⛔ Открыта SPOT-позиция по {symbol}")
+                print(f"[DEBUG] SPOT: Цена входа={details[0]}, Время={details[1]}")
+
+            if short_result > 0:
+                details = conn.execute("""
+                    SELECT entry_price, entry_time FROM short_positions 
+                    WHERE symbol=? AND closed=0 LIMIT 1
+                """, (symbol,)).fetchone()
+                print(f"[INFO] ⛔ Открыта SHORT-позиция по {symbol}")
+                print(f"[DEBUG] SHORT: Цена входа={details[0]}, Время={details[1]}")
+
+            if spot_result == 0 and short_result == 0:
                 print(f"[DEBUG] ✅ Нет открытых позиций по {symbol}")
 
-            return result[0] > 0
+            return (spot_result + short_result) > 0
+
     except Exception as e:
         print(f"[ERROR] ❌ Ошибка проверки позиции {symbol}: {str(e)}")
         return False
@@ -88,74 +164,314 @@ def get_price(market_api, ticker):
         print(f"[ERROR] 🔥 Ошибка получения цены для {ticker}: {str(e)}")
         return 0.0
 
-def log_position(symbol, position_type, price, timestamp, order_id):
-    """Логирование новой позиции с выводом через print"""
-    print(f"[INFO] Логируем новую позицию: {symbol} {position_type} по {price}")
-    print(f"[DEBUG] Детали позиции:\n"
+
+def log_position(symbol, position_type, price, timestamp, order_id, leverage=None,
+                 amount=None, side=None, maker_fee=0.0, taker_fee=0.0,
+                 ):
+    """
+    Логирует новую позицию с учетом стоп-лосса для шортов
+
+    Args:
+        symbol: Идентификатор инструмента (например "BTC-USDT-SWAP")
+        position_type: Тип позиции ("SPOT" или "SHORT")
+        price: Цена входа
+        timestamp: Время открытия позиции
+        order_id: ID ордера
+        leverage: Плечо (для маржинальных позиций)
+        amount: Объем позиции
+        side: Направление сделки
+        maker_fee: Комиссия мейкера
+        taker_fee: Комиссия тейкера
+    """
+    print(f"[INFO] 📝 Логируем новую позицию: {symbol} [{position_type}] по цене {price}")
+    print(f"[DEBUG] Параметры:\n"
           f"Symbol: {symbol}\n"
           f"Type: {position_type}\n"
           f"Price: {price}\n"
           f"Time: {timestamp}\n"
-          f"Order ID: {order_id}")
+          f"Order ID: {order_id}\n"
+          f"Leverage: {leverage}\n"
+          f"Amount: {amount}\n"
+          f"Side: {side}\n"
+          f"Maker Fee: {maker_fee}\n")
+
+    safe_amount = amount if amount is not None else 0.0
 
     try:
         with sqlite3.connect(DB_NAME) as conn:
-            conn.execute("""
-                INSERT INTO positions 
-                (symbol, position_type, entry_price, entry_time, order_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (symbol, position_type, price, timestamp, order_id))
-            print(f"[INFO] ✅ Позиция {symbol} успешно записана в БД")
-    except sqlite3.IntegrityError:
-        print(f"[WARNING] ⚠️ Позиция {symbol} уже существует в БД")
+            table = "spot_positions" if position_type.upper() == "SPOT" else "short_positions" if position_type.upper() == "SHORT" else None
+
+            if table is None:
+                print(f"[WARNING] ❓ Неизвестный тип позиции: {position_type}. Пропускаем запись.")
+                return
+
+            existing = conn.execute(
+                f"SELECT id FROM {table} WHERE symbol=? AND closed=0",
+                (symbol,)
+            ).fetchone()
+
+            if existing:
+                print(f"[INFO] 🚫 Позиция {symbol} уже существует и активна. Пропускаем дублирование.")
+                return
+
+            # Расчет комиссии
+            maker_fee_usdt = float(Decimal(safe_amount) * Decimal(price) * Decimal(maker_fee))
+            taker_fee_usdt = float(Decimal(safe_amount) * Decimal(price) * Decimal(taker_fee))
+
+            if position_type.upper() == "SPOT":
+                conn.execute("""
+                    INSERT INTO spot_positions 
+                    (symbol, entry_price, entry_time, order_id, amount, 
+                     maker_fee, taker_fee, maker_fee_usdt, taker_fee_usdt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    symbol, price, timestamp, order_id, safe_amount,
+                    maker_fee, taker_fee, maker_fee_usdt, taker_fee_usdt
+                ))
+                print(f"[INFO] ✅ SPOT-позиция {symbol} успешно записана")
+
+            elif position_type.upper() == "SHORT":
+                conn.execute("""
+                    INSERT INTO short_positions 
+                    (symbol, entry_price, entry_time, order_id, leverage, 
+                     amount, side, maker_fee, taker_fee, maker_fee_usdt, 
+                     taker_fee_usdt)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    symbol, price, timestamp, order_id, leverage,
+                    safe_amount, side, maker_fee, taker_fee, maker_fee_usdt,
+                    taker_fee_usdt
+                ))
+                print(f"[INFO] ✅ SHORT-позиция {symbol} успешно записана")
+
+    except sqlite3.Error as e:
+        print(f"[ERROR] 🔥 Ошибка SQL при логировании позиции {symbol}: {str(e)}")
+        raise
     except Exception as e:
-        print(f"[ERROR] 🔥 Ошибка записи позиции: {str(e)}")
+        print(f"[ERROR] 🔥 Неожиданная ошибка при логировании {symbol}: {str(e)}")
         raise
 
-def place_buy_order(trade_api, account_api, market_api, current_price, symbol, amount_usdt,
-                    timestamp=None):
-    """Размещение ордера на покупку с выводом через print"""
+
+
+
+
+def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, position_monitor, timestamp=None):
+    """Размещение ордера на покупку"""
     print(f"[INFO] Начало процесса покупки {symbol} на сумму {amount_usdt} USDT")
 
     if timestamp is None:
         timestamp = datetime.now().isoformat()
-        print(f"[DEBUG] Установлено время операции: {timestamp}")
 
-    formatted_symbol = symbol
-    print(f"[DEBUG] Форматированный символ: {formatted_symbol}")
+    formatted_symbol = f"{symbol}-USDT"
 
     if has_open_position(formatted_symbol):
         print(f"[WARNING] ⏸️ Пропускаем покупку {symbol} - позиция уже открыта")
         return False
 
+
     print("[INFO] 🔄 Получаем текущую цену...")
-    price = get_price(market_api, symbol)
+    price = get_price(market_api, formatted_symbol)
     if price == 0:
         print("[ERROR] ❌ Нулевая цена, отмена покупки")
         return False
 
-    print(f"[INFO] ✉️ Отправляем ордер на покупку {symbol}...")
+    amount = Decimal(amount_usdt) / Decimal(price)
+    amount_rounded = amount.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
+
+    fees = get_trade_fee(account_api, formatted_symbol)
+    print(
+        f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
+
+    print(f"[INFO] ✉️ Отправляем ордер на покупку {formatted_symbol}...")
     try:
-        start_time = datetime.now()
-        order = trade_api.place_order(
-            instId=symbol,
+        print(f"[DEBUG] Размещение SPOT-ордера на сумму: {amount_usdt} USDT")
+        order = trade_api.place_order(  # Закрывающая скобка была пропущена
+            instId=formatted_symbol,
             tdMode="cash",
             side="buy",
             ordType="market",
-            sz=str(amount_usdt)
-        )
-        response_time = (datetime.now() - start_time).total_seconds()
-
-        print(f"[DEBUG] Ответ API (время: {response_time:.3f} сек): {order}")
+            sz=str(amount_usdt),
+        )  # Добавлена закрывающая скобка
 
         if order.get("code") == "0" and order.get("data"):
             ord_id = order["data"][0].get("ordId")
-            print(f"[INFO] Успешная покупка {symbol}! Order ID: {ord_id}")
-            log_position(formatted_symbol, "SPOT", price, timestamp, ord_id)
+            print(f"[INFO] Успешная покупка {formatted_symbol}! Order ID: {ord_id}")
+            log_position(formatted_symbol, "SPOT", price, timestamp, ord_id, amount=float(amount_rounded),maker_fee=float(fees['maker']),taker_fee=float(fees['taker']))
+
+            # Запускаем мониторинг позиции
+            position_monitor._check_position(formatted_symbol, price)
             return True
-        else:
-            print(f"[ERROR] ❌ Ошибка в ответе API: {order}")
-            return False
+
     except Exception as e:
         print(f"[ERROR] 🔥 Критическая ошибка при покупке: {str(e)}")
+
+    return False
+
+
+def get_swap_contract(symbol: str, market_api, account_api) -> dict:
+    """
+    Возвращает данные контракта (включая ctVal) для symbol, например 'BTC'
+    """
+    try:
+        contracts = account_api.get_instruments(instType="SWAP")
+        for contract in contracts.get("data", []):
+            if contract["instId"].startswith(f"{symbol.upper()}-USDT"):
+                print(contract)
+                return contract
+        raise ValueError(f"Контракт для {symbol} не найден")
+    except Exception as e:
+        raise RuntimeError(f"Ошибка при получении контракта: {e}")
+
+def _get_contract_balance(symbol: str, account_api) -> Tuple[Decimal, str]:
+    try:
+        print(f"Запрос позиций для {symbol}...")
+        res = account_api.get_positions(instType="SWAP")
+        if res.get("code") == "0":
+            for position in res.get("data", []):
+                if position["instId"] == symbol:
+                    #print(f"[DEBUG] Найдена позиция: {position}")
+                    pos_amount_str = position.get("pos") or position.get("availPos") or "0"
+                    pos_side = position.get("posSide", "net")
+                    return Decimal(pos_amount_str), pos_side
+    except Exception as e:
+        print(f"Ошибка при получении позиций: {e}")
+    return Decimal("0"), "net"
+def place_sell_order(
+        trade_api,
+        account_api,
+        market_api,
+        symbol: str,
+        amount_usdt: float,
+        position_monitor,
+        timestamp: str,
+        leverage: int
+) -> bool:
+    """
+    Размещает SELL ордер с расчётом количества контрактов (SHORT позиция)
+
+    Args:
+        trade_api: API для торговли
+        account_api: API аккаунта
+        market_api: API рынка
+        symbol: Торговый символ (например "BTC")
+        amount_usdt: Сумма в USDT для открытия позиции
+        position_monitor: Объект мониторинга позиций
+        timestamp: Временная метка открытия позиции
+        leverage: Плечо (по умолчанию 4)
+
+    Returns:
+        bool: True если ордер успешно размещен, False в случае ошибки
+    """
+    try:
+        # 0. Форматируем символ для OKX
+        formatted_symbol = f"{symbol}-USDT-SWAP"
+        print(f"[INFO] 🚀 Начало размещения SHORT позиции для {formatted_symbol}")
+
+        # 1. Проверяем нет ли уже открытой позиции
+        if has_open_position(formatted_symbol):
+            print(f"[WARNING] ⏸️ Пропускаем продажу {symbol} - позиция уже открыта")
+            return False
+
+        # 2. Получаем данные контракта
+        print(f"[INFO] 🔍 Получение данных контракта для {formatted_symbol}...")
+        contract = get_swap_contract(symbol, market_api, account_api)
+        if not contract:
+            print(f"[ERROR] ❌ Контракт для {formatted_symbol} не найден")
+            return False
+
+        # Получаем комиссии
+        fees = get_trade_fee(account_api, formatted_symbol)
+        print(
+            f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
+
+        # 3. Устанавливаем плечо
+        leverage_res = account_api.set_leverage(
+            instId=formatted_symbol,
+            lever=str(leverage),
+            mgnMode="isolated",
+            posSide="short",
+        )
+        if leverage_res.get('code') != '0':
+            raise ValueError(f"Ошибка установки плеча: {leverage_res.get('msg')}")
+        print(f"[INFO] ✅ Плечо {leverage}x установлено")
+
+        # 4. Получаем текущую цену
+        ticker = market_api.get_ticker(formatted_symbol)
+        if ticker.get('code') != '0':
+            raise ValueError(f"Ошибка получения цены: {ticker.get('msg')}")
+        current_price = Decimal(ticker['data'][0]['last'])
+        print(f"[INFO] 💵 Текущая цена: {current_price}")
+
+        # 5. Расчёт количества контрактов: USDT / (цена * размер_контракта)
+        def calculate_size():
+            ct_val = Decimal(contract['ctVal'])
+            lot_sz = Decimal(contract['lotSz'])
+            min_sz = Decimal(contract['minSz'])
+
+            raw_size = Decimal(amount_usdt) / (current_price * ct_val)
+            # Округление до ближайшего кратного lot_sz вниз
+            rounded_size = (raw_size // lot_sz) * lot_sz
+            return max(min_sz, rounded_size)
+
+        size = calculate_size()
+
+        # 6. Размещение ордера
+        balance_data = account_api.get_account_balance(ccy="USDT")
+        if balance_data.get("code") != "0":
+            return False
+
+        available_balance = Decimal(balance_data['data'][0]['details'][0]['availBal'])
+        required_margin = (size * current_price) / Decimal(leverage)
+
+        if available_balance < required_margin:
+            return False
+
+        print(f"[INFO] 📤 Отправка ордера на продажу...")
+        order = trade_api.place_order(
+            instId=formatted_symbol,
+            tdMode="isolated",
+            side="sell",
+            posSide="short",
+            ordType="market",
+            sz=str(size.quantize(Decimal('0.00000001')))
+        )
+
+        if order.get('code') != '0':
+            error_data = order.get('data', [{}])[0]
+            print(f"""
+            [ERROR] Ошибка ордера:
+            Код: {order.get('code')}
+            Сообщение: {order.get('msg')}
+            Детали: {error_data.get('sMsg', 'нет данных')}
+            """)
+            return False
+
+        order_id = order['data'][0].get('ordId')
+        print(f"[INFO] 🎉 Ордер успешно размещен. ID: {order_id}")
+
+
+        log_position(
+            symbol=formatted_symbol,
+            position_type="SHORT",
+            price=float(current_price),
+            timestamp=timestamp,
+            order_id=order_id,
+            leverage=leverage,
+            amount=float(size),
+            side="sell",
+            maker_fee=float(fees['maker']),
+            taker_fee=float(fees['taker']),
+        )
+
+        position_monitor._start_timer(formatted_symbol, position_monitor.close_after_seconds)
+        print(f"[SUCCESS] ✅ SHORT позиция по {formatted_symbol} успешно открыта со стоп-лоссом")
+
+        return True
+
+    except ValueError as ve:
+        print(f"[ERROR] ❌ Ошибка валидации: {str(ve)}")
         return False
+    except Exception as e:
+        print(f"[ERROR] 🔥 Критическая ошибка: {str(e)}")
+        return False
+
