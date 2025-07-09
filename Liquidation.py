@@ -67,6 +67,8 @@ class LiquidationChecker:
             before=str(before_ms),
         )
 
+        logger.info(res)
+
         if res.get("code") != "0":
             logger.error(f"[ERROR] Ошибка от OKX API: {res}")
             return False
