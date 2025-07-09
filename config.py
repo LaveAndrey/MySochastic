@@ -23,10 +23,10 @@ IS_DEMO = True
 
 MAX_WORKERS = 10
 AMOUNT_USDT = os.getenv('AMOUNT_USDT')
-LEVERAGE = os.getenv('LEVERAGE')
-CLOSE_AFTER_MINUTES = os.getenv('CLOSE_AFTER_MINUTES')
-PROFIT_PERCENT = os.getenv('PROFIT_PERCENT')
-UPDATE_LIQUID = os.getenv('UPDATE_LIQUID')
+LEVERAGE = int(os.getenv('LEVERAGE'))
+CLOSE_AFTER_MINUTES = int(os.getenv('CLOSE_AFTER_MINUTES'))
+PROFIT_PERCENT = float(os.getenv('PROFIT_PERCENT'))
+UPDATE_LIQUID = int(os.getenv('UPDATE_LIQUID'))
 
 # Time settings
 TIMEZONE = pytz.timezone('Europe/Moscow')
