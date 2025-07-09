@@ -19,7 +19,7 @@ PASSPHRASE_DEMO = os.getenv('PASSPHRASE_DEMO')
 SHEET_ID = os.getenv('GOOGLE_SHEETS_ID')
 CREDS_FILE = 'credentials.json'
 K_PERIOD = 14
-IS_DEMO = 1
+IS_DEMO = "1"
 
 MAX_WORKERS = 10
 AMOUNT_USDT = os.getenv('AMOUNT_USDT')
