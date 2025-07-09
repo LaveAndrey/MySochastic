@@ -82,7 +82,7 @@ class LiquidationChecker:
     def _process_liquidation(self, pos_data: Dict[str, Any]) -> bool:
         """Обрабатывает одну ликвидацию"""
         inst_id = pos_data.get("instId")
-        ts = pos_data.get("ts", "")
+        ts = pos_data.get("uTime") or pos_data.get("cTime")
         unique_id = f"{inst_id}:{ts}"
 
         if not inst_id or not ts:

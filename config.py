@@ -6,7 +6,7 @@ from datetime import time as dtime
 
 load_dotenv()
 DB_NAME = "signals.db"
-COINS_FILE = "coins_list.txt"
+COINS_FILE = "coins_list"
 
 # Telegram settings
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
