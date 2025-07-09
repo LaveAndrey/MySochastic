@@ -1,6 +1,8 @@
 # Используем официальный образ Python
 FROM python:3.11
 
+RUN apt-get update && apt-get install -y sqlite3
+
 # Устанавливаем рабочую директорию внутри контейнера
 WORKDIR /app
 
