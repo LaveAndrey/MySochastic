@@ -1,8 +1,7 @@
 import pandas as pd
-from typing import Optional, Tuple
+from typing import Optional, List, Tuple
 from datetime import datetime
 import logging
-
 logger = logging.getLogger(__name__)
 def calculate_k(symbol: str, df: pd.DataFrame, K_PERIOD) -> Tuple[Optional[float], Optional[datetime]]:
     if len(df) < K_PERIOD + 1:
@@ -17,5 +16,5 @@ def calculate_k(symbol: str, df: pd.DataFrame, K_PERIOD) -> Tuple[Optional[float
         k = 100 * (close - low) / (high - low) if high != low else 50
         return k, last['close_time']
     except Exception as e:
-        logger.error(f"{symbol}: Ошибка расчета %K: {e}")
+        logger.error(f"{symbol}: Ошибка расчета %K: {e}", "error")
         return None, None

@@ -16,7 +16,7 @@ def init_db():
         logger.info(f"[INFO] 🔧 Начинаем инициализацию БД: {DB_NAME}")
         with sqlite3.connect(DB_NAME) as conn:
             # Таблица для SPOT-позиций
-            logger.info("[INFO] 🔍 Проверяем таблицу spot_positions...")
+            logger.info("[INFO] Проверяем таблицу spot_positions...")
             conn.execute("""
             CREATE TABLE IF NOT EXISTS spot_positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,7 +40,7 @@ def init_db():
             logger.info("[INFO] ✅ Таблица spot_positions готова")
 
             # Таблица для SHORT (маржинальных) позиций
-            logger.info("[INFO] 🔍 Проверяем таблицу short_positions...")
+            logger.info("[INFO] Проверяем таблицу short_positions...")
             conn.execute("""
             CREATE TABLE IF NOT EXISTS short_positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +66,7 @@ def init_db():
             logger.info("[INFO] ✅ Таблица short_positions готова")
 
 
-        logger.info(f"[INFO] 🏁 База данных {DB_NAME} полностью готова к работе")
+        logger.info(f"[INFO] База данных {DB_NAME} полностью готова к работе")
 
     except Exception as e:
         logger.error(f"[ERROR] 🔥 Критическая ошибка при инициализации БД: {e}")
@@ -368,7 +368,7 @@ def place_sell_order(
     try:
         # 0. Форматируем символ для OKX
         formatted_symbol = f"{symbol}-USDT-SWAP"
-        logger.info(f"[INFO] 🚀 Начало размещения SHORT позиции для {formatted_symbol}")
+        logger.info(f"[INFO] Начало размещения SHORT позиции для {formatted_symbol}")
 
         # 1. Проверяем нет ли уже открытой позиции
         if has_open_position(formatted_symbol):

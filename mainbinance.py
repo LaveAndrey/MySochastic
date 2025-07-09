@@ -38,7 +38,7 @@ from notoficated import send_position_closed_message
 import logging
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # вместо INFO
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('bot.log'),
@@ -46,6 +46,7 @@ logging.basicConfig(
     ]
 )
 logger = logging.getLogger(__name__)
+
 
 load_dotenv()
 if SHEET_ID:
@@ -206,10 +207,10 @@ def determine_signal(k_prev: float, k_curr: float) -> str:
     message = f"%K: {k_prev:.2f} {arrow} {k_curr:.2f}"
 
     if k_prev < 20 and k_curr >= 20:
-        logger.info(f"{message} — 🔼 BUY сигнал")
+        logger.info(f"{message} — BUY сигнал")
         return "BUY"
     elif k_prev > 80 and k_curr <= 80:
-        logger.info(f"{message} — 🔽 SELL сигнал")
+        logger.info(f"{message} — SELL сигнал")
         return "SELL"
     else:
         logger.info(f"{message} — HOLD")

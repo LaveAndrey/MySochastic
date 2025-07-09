@@ -27,7 +27,7 @@ def send_telegram_message(text: str, parse_mode: str = "Markdown"):
     try:
         response = requests.post(TELEGRAM_API_URL, json=payload)
         if response.status_code == 200:
-            logger.info("✅ Сообщение успешно отправлено")
+            logger.info(" Сообщение успешно отправлено")
         elif response.status_code == 429:
             data = response.json()
             retry_after = data.get("parameters", {}).get("retry_after", 10)
