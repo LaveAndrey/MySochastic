@@ -60,9 +60,9 @@ else:
     sheet_logger = None
 
 timer_storage = TimerStorage()
-trade_api = TradeAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
-account_api = AccountAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
-market_api = MarketAPI(API_KEY, API_SECRET, PASSPHRASE, IS_DEMO, domain="https://www.okx.com")
+trade_api = TradeAPI(API_KEY, API_SECRET, PASSPHRASE, flag=IS_DEMO, domain="https://www.okx.com")
+account_api = AccountAPI(API_KEY, API_SECRET, PASSPHRASE, flag=IS_DEMO, domain="https://www.okx.com")
+market_api = MarketAPI(API_KEY, API_SECRET, PASSPHRASE, flag=IS_DEMO, domain="https://www.okx.com")
 position_monitor1 = PositionMonitor(trade_api, account_api, market_api, close_after_minutes=CLOSE_AFTER_MINUTES, profit_threshold=PROFIT_PERCENT, timer_storage=timer_storage, sheet_logger=sheet_logger)
 
 
