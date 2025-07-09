@@ -16,5 +16,5 @@ def calculate_k(symbol: str, df: pd.DataFrame, K_PERIOD) -> Tuple[Optional[float
         k = 100 * (close - low) / (high - low) if high != low else 50
         return k, last['close_time']
     except Exception as e:
-        logger.error(f"{symbol}: Ошибка расчета %K: {e}", "error")
+        logger.error(f"{symbol}: Ошибка расчета %K: {e}")
         return None, None

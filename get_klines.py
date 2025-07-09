@@ -23,5 +23,5 @@ def get_klines(symbol: str, TIMEZONE, INTERVAL, K_PERIOD) -> Optional[pd.DataFra
             df[col] = pd.to_numeric(df[col], errors='coerce')
         return df.dropna()
     except Exception as e:
-        logger.error(f"{symbol}: Ошибка API - {e}", "error")
+        logger.error(f"{symbol}: Ошибка API - {e}")
         return None
