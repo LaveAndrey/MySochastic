@@ -54,17 +54,9 @@ class LiquidationChecker:
 
     def _check_liquidations(self) -> bool:
         """Основная логика проверки ликвидаций"""
-        now = datetime.utcnow()
-        five_minutes_ago = now - timedelta(minutes=5)
-
-        after_ms = int(five_minutes_ago.timestamp() * 1000)
-        before_ms = int(now.timestamp() * 1000)
-
         res = self.account_api.get_positions_history(
             instType="SWAP",
-            type="3",  # Только ликвидации
-            after=str(after_ms),
-            before=str(before_ms),
+            type="3",
         )
 
         logger.info(res)
@@ -77,7 +69,7 @@ class LiquidationChecker:
         if not liquidations:
             return True  # Ликвидаций нет, но проверка выполнена
 
-        logger.info(f"[INFO] Найдено {len(liquidations)} ликвидаций за последние 5 минут")
+        logger.info(f"[INFO] Найдено {len(liquidations)} ликвидаций")
 
         processed = 0
         for pos in liquidations:

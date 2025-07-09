@@ -121,31 +121,28 @@ def get_current_price(symbol: str) -> float:  # ✅ нормализация
 
 
 # === Загрузка монет ===
-def is_valid_pair_okx(symbol):
-    """Проверяет, существует ли торговая пара на OKX"""
+def is_valid_pair_binance(symbol):
+    """Проверяет, существует ли торговая пара на Binance (SPOT)"""
     try:
-        inst_id = f"{symbol}-USDT"
-        url = f"https://www.okx.com/api/v5/public/instruments?instType=SPOT"
+        pair = f"{symbol.upper()}USDT"
+        url = "https://api.binance.com/api/v3/exchangeInfo"
         response = requests.get(url, timeout=10)
+
         if response.status_code != 200:
-            logger.error(f"Ошибка запроса к OKX (код {response.status_code})")
+            logger.error(f"Ошибка запроса к Binance (код {response.status_code})")
             return False
 
         data = response.json()
-        if data.get("code") != "0":
-            logger.error(f"Ошибка OKX API: {data.get('msg', 'нет сообщения')}")
-            return False
+        symbols = data.get("symbols", [])
 
-        instruments = data.get("data", [])
-        if any(inst["instId"] == inst_id for inst in instruments):
+        if any(item["symbol"] == pair and item["status"] == "TRADING" for item in symbols):
             return True
         else:
-            logger.warning(f"Пара {inst_id} не найдена на OKX")
+            logger.warning(f"Пара {pair} не найдена или неактивна на Binance")
             return False
     except Exception as e:
-        logger.error(f"Ошибка проверки пары {symbol}-USDT на OKX: {str(e)}")
+        logger.error(f"Ошибка проверки пары {symbol}-USDT на Binance: {str(e)}")
         return False
-
 
 
 def load_symbols():
@@ -157,7 +154,7 @@ def load_symbols():
             invalid_symbols = []
 
             for symbol in all_symbols:
-                if is_valid_pair_okx(symbol):
+                if is_valid_pair_binance(symbol):
                     valid_symbols.append(symbol)
                 else:
                     invalid_symbols.append(symbol)
