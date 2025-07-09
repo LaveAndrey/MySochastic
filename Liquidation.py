@@ -5,6 +5,9 @@ from decimal import Decimal
 import sqlite3
 from typing import Optional, Callable, Dict, Any
 from config import UPDATE_LIQUID
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class LiquidationChecker:
@@ -45,7 +48,7 @@ class LiquidationChecker:
             self._last_check_time = now
             return self._check_liquidations()
         except Exception as e:
-            print(f"[CRITICAL] Ошибка в LiquidationChecker: {e}")
+            logger.error(f"[CRITICAL] Ошибка в LiquidationChecker: {e}")
             traceback.print_exc()
             return False
 
@@ -65,21 +68,21 @@ class LiquidationChecker:
         )
 
         if res.get("code") != "0":
-            print(f"[ERROR] Ошибка от OKX API: {res}")
+            logger.error(f"[ERROR] Ошибка от OKX API: {res}")
             return False
 
         liquidations = res.get("data", [])
         if not liquidations:
             return True  # Ликвидаций нет, но проверка выполнена
 
-        print(f"[INFO] Найдено {len(liquidations)} ликвидаций за последние 5 минут")
+        logger.info(f"[INFO] Найдено {len(liquidations)} ликвидаций за последние 5 минут")
 
         processed = 0
         for pos in liquidations:
             if self._process_liquidation(pos):
                 processed += 1
 
-        print(f"[INFO] Обработано {processed} новых ликвидаций")
+        logger.info(f"[INFO] Обработано {processed} новых ликвидаций")
         return True
 
     def _process_liquidation(self, pos_data: Dict[str, Any]) -> bool:
@@ -89,14 +92,14 @@ class LiquidationChecker:
         unique_id = f"{inst_id}:{ts}"
 
         if not inst_id or not ts:
-            print(f"[WARN] Некорректные данные ликвидации: {pos_data}")
+            logger.warning(f"[WARN] Некорректные данные ликвидации: {pos_data}")
             return False
 
         if unique_id in self._seen_liquidations:
             return False  # уже обработано
 
         self._seen_liquidations.add(unique_id)
-        print(f"[LIQUIDATION] Обнаружена ликвидация: {inst_id}")
+        logger.info(f"[LIQUIDATION] Обнаружена ликвидация: {inst_id}")
 
         # Основная обработка
         try:
@@ -116,7 +119,7 @@ class LiquidationChecker:
                 """, (inst_id,))
 
                 if not cursor.fetchone():
-                    print(f"[WARN] Ликвидация {inst_id} не найдена в БД")
+                    logger.warning(f"[WARN] Ликвидация {inst_id} не найдена в БД")
                     return False
 
                 # Обновляем позицию
@@ -166,6 +169,6 @@ class LiquidationChecker:
             return True
 
         except Exception as e:
-            print(f"[ERROR] Ошибка обработки ликвидации {inst_id}: {e}")
+            logger.error(f"[ERROR] Ошибка обработки ликвидации {inst_id}: {e}")
             traceback.print_exc()
             return False

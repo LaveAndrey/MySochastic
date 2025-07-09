@@ -1,6 +1,9 @@
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 class GoogleSheetsLogger:
     def __init__(self, creds_path: str, sheet_name: str):
@@ -16,7 +19,7 @@ class GoogleSheetsLogger:
 
         # Проверка наличия всех ключей
         if not all(k in data for k in required_fields):
-            print(f"[SHEET ERROR] Отсутствуют обязательные поля: {required_fields}")
+            logger.error(f"[SHEET ERROR] Отсутствуют обязательные поля: {required_fields}")
             return False
 
         try:
@@ -24,7 +27,7 @@ class GoogleSheetsLogger:
             for field in ["entry_price", "close_price", "pnl_usd", "pnl_percent"]:
                 value = data.get(field)
                 if value in [None, "", "-"]:
-                    print(f"[SHEET ERROR] Поле {field} содержит недопустимое значение: {value}")
+                    logger.error(f"[SHEET ERROR] Поле {field} содержит недопустимое значение: {value}")
                     return False
 
             # Подготовка строки
@@ -39,17 +42,17 @@ class GoogleSheetsLogger:
                 data.get("reason", "N/A")
             ]
 
-            print(f"[DEBUG] Типы данных: { {k: type(v) for k, v in data.items()} }")
+            logger.debug(f"[DEBUG] Типы данных: { {k: type(v) for k, v in data.items()} }")
 
             # Запись в таблицу
             self.sheet.append_row(row_data)
-            print(f"[SHEET LOG] Успешно записана позиция {data['symbol']}")
+            logger.info(f"[SHEET LOG] Успешно записана позиция {data['symbol']}")
             return True
 
         except gspread.exceptions.APIError as e:
-            print(f"[SHEET API ERROR] Ошибка Google API: {str(e)}")
+            logger.error(f"[SHEET API ERROR] Ошибка Google API: {str(e)}")
         except Exception as e:
-            print(f"[SHEET CRITICAL ERROR] Неизвестная ошибка: {str(e)}")
+            logger.error(f"[SHEET CRITICAL ERROR] Неизвестная ошибка: {str(e)}")
 
         return False
 

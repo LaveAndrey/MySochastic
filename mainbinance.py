@@ -35,14 +35,25 @@ from TimerStorage import TimerStorage
 from googlesheets import GoogleSheetsLogger
 from Liquidation import LiquidationChecker
 from notoficated import send_position_closed_message
+import logging
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 if SHEET_ID:
     try:
         sheet_logger = GoogleSheetsLogger(CREDS_FILE, SHEET_ID)
-        print(f"Google Sheets Logger инициализирован. Рабочий лист: {sheet_logger.sheet.title}")
+        logger.info(f"Google Sheets Logger инициализирован. Рабочий лист: {sheet_logger.sheet.title}")
     except Exception as e:
-        print(f"Ошибка инициализации Google Sheets: {str(e)}")
+        logger.error(f"Ошибка инициализации Google Sheets: {str(e)}")
         sheet_logger = None
 else:
     sheet_logger = None
@@ -74,7 +85,7 @@ def handle_ws_message(data):
             """)
             active_positions = {row['symbol'] for row in cursor}
     except Exception as e:
-        print(f"Ошибка получения позиций: {e}")
+        logger.error(f"Ошибка получения позиций: {e}")
         return
 
     # Обрабатываем только тикеры с активными позициями
@@ -99,7 +110,7 @@ def get_current_price(symbol: str) -> float:  # ✅ нормализация
     okx_USDT = f"{symbol}-USDT"
     url = f"https://www.okx.com/api/v5/market/ticker?instId={okx_USDT}"
 
-    log(f"📡 Запрос цены по URL: {url}", "info")
+    logger.info(f"📡 Запрос цены по URL: {url}")
 
     response = requests.get(url)
     data = response.json()
@@ -107,11 +118,6 @@ def get_current_price(symbol: str) -> float:  # ✅ нормализация
         raise ValueError(f"Нет данных по {symbol}: {data}")
     return float(data["data"][0]["last"])
 
-
-def log(message: str, level: str = "info"):
-    timestamp = datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')
-    icons = {"error": "❌", "warning": "⚠️", "success": "✅", "info": "ℹ️"}
-    print(f"{icons.get(level, '')} [{timestamp}] {message}")
 
 # === Загрузка монет ===
 def is_valid_pair_okx(symbol):
@@ -121,22 +127,22 @@ def is_valid_pair_okx(symbol):
         url = f"https://www.okx.com/api/v5/public/instruments?instType=SPOT"
         response = requests.get(url, timeout=10)
         if response.status_code != 200:
-            log(f"Ошибка запроса к OKX (код {response.status_code})", "error")
+            logger.error(f"Ошибка запроса к OKX (код {response.status_code})")
             return False
 
         data = response.json()
         if data.get("code") != "0":
-            log(f"Ошибка OKX API: {data.get('msg', 'нет сообщения')}", "error")
+            logger.error(f"Ошибка OKX API: {data.get('msg', 'нет сообщения')}")
             return False
 
         instruments = data.get("data", [])
         if any(inst["instId"] == inst_id for inst in instruments):
             return True
         else:
-            log(f"Пара {inst_id} не найдена на OKX", "warning")
+            logger.warning(f"Пара {inst_id} не найдена на OKX")
             return False
     except Exception as e:
-        log(f"Ошибка проверки пары {symbol}-USDT на OKX: {str(e)}", "error")
+        logger.error(f"Ошибка проверки пары {symbol}-USDT на OKX: {str(e)}")
         return False
 
 
@@ -156,12 +162,12 @@ def load_symbols():
                     invalid_symbols.append(symbol)
 
             if invalid_symbols:
-                log(f"Следующие символы не найдены на бирже: {', '.join(invalid_symbols)}", "warning")
+                logger.warning(f"Следующие символы не найдены на бирже: {', '.join(invalid_symbols)}")
 
-            log(f"Загружено {len(valid_symbols)} валидных символов из {len(all_symbols)}", "info")
+            logger.info(f"Загружено {len(valid_symbols)} валидных символов из {len(all_symbols)}")
             return valid_symbols
     except Exception as e:
-        log(f"Ошибка загрузки символов: {str(e)}", "error")
+        logger.error(f"Ошибка загрузки символов: {str(e)}")
         return []
 
 
@@ -189,9 +195,9 @@ def save_to_db(symbol: str, timestamp: str, k: float):
                     INSERT INTO signals (symbol, timestamp, k_value, date)
                     VALUES (?, ?, ?, ?)
                 """, (symbol, timestamp, k, datetime.now(TIMEZONE).strftime('%Y-%m-%d')))
-        log(f"{symbol}: ✅ Сохранено в signals | %K={k:.2f}", "success")
+        logger.info(f"{symbol}: ✅ Сохранено в signals | %K={k:.2f}")
     except Exception as e:
-        log(f"{symbol}: ❌ Ошибка сохранения в БД: {e}", "error")
+        logger.error(f"{symbol}: ❌ Ошибка сохранения в БД: {e}", "error")
 
 
 # === Функция определения сигнала по двум значениям %K ===
@@ -200,13 +206,13 @@ def determine_signal(k_prev: float, k_curr: float) -> str:
     message = f"%K: {k_prev:.2f} {arrow} {k_curr:.2f}"
 
     if k_prev < 20 and k_curr >= 20:
-        log(f"{message} — 🔼 BUY сигнал", "success")
+        logger.info(f"{message} — 🔼 BUY сигнал")
         return "BUY"
     elif k_prev > 80 and k_curr <= 80:
-        log(f"{message} — 🔽 SELL сигнал", "success")
+        logger.info(f"{message} — 🔽 SELL сигнал")
         return "SELL"
     else:
-        log(f"{message} — HOLD", "info")
+        logger.info(f"{message} — HOLD")
         return "HOLD"
 
 # === Отправка сообщения в Telegram с сигналом ===
@@ -258,10 +264,10 @@ def send_signal_message(symbol: str, signal: str, k_prev: float, k_curr: float, 
                 f"⏰ Время: {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}"
             )
             send_telegram_message(entry_message)
-            log(f"{symbol}: {'🟢' if signal == 'BUY' else '🔴'} Позиция открыта", "success")
+            logger.info(f"{symbol}: {'🟢' if signal == 'BUY' else '🔴'} Позиция открыта")
 
     except Exception as e:
-        log(f"{symbol}: ❌ Ошибка: {e}", "error")
+        logger.error(f"{symbol}: ❌ Ошибка: {e}")
 
 
 
@@ -273,23 +279,23 @@ def send_signal_message(symbol: str, signal: str, k_prev: float, k_curr: float, 
 def process_symbol(symbol: str):
     """Обрабатывает один символ и возвращает статус обработки"""
     try:
-        log(f"Начинаем обработку символа: {symbol}", "debug")
+        logger.debug(f"Начинаем обработку символа: {symbol}")
         time.sleep(0.3)
-        df = get_klines(symbol, log, TIMEZONE, INTERVAL, K_PERIOD)
+        df = get_klines(symbol, TIMEZONE, INTERVAL, K_PERIOD)
         if df is None:
-            log(f"Не удалось получить данные для {symbol}", "warning")
+            logger.warning(f"Не удалось получить данные для {symbol}")
             return "error"
 
-        k, ts = calculate_k(symbol, df, K_PERIOD, log)
+        k, ts = calculate_k(symbol, df, K_PERIOD)
         if k is None or ts is None:
-            log(f"Не удалось рассчитать %K для {symbol}", "warning")
+            logger.warning(f"Не удалось рассчитать %K для {symbol}")
             return "warning"
 
         save_to_db(symbol, ts.isoformat(), k)
-        log(f"Символ {symbol} успешно обработан (K={k:.2f})", "success")
+        logger.info(f"Символ {symbol} успешно обработан (K={k:.2f})")
         return "success"
     except Exception as e:
-        log(f"Критическая ошибка обработки {symbol}: {str(e)}", "error")
+        logger.error(f"Критическая ошибка обработки {symbol}: {str(e)}")
         return "error"
 
 # === Ожидание следующего запуска ===
@@ -302,7 +308,7 @@ def process_symbol(symbol: str):
 #        default=TIMEZONE.localize(datetime.combine(now.date() + pd.Timedelta(days=1), UPDATE_TIMES[0]))
 #    )
 #    wait_seconds = (next_update - now).total_seconds()
-#    log(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+#    logger.info(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
 #    time.sleep(wait_seconds)
 
 def wait_until_next_update(interval_minutes=3):
@@ -315,7 +321,7 @@ def wait_until_next_update(interval_minutes=3):
         next_update = now.replace(minute=minute, second=0, microsecond=0)
 
     wait_seconds = (next_update - now).total_seconds()
-    print(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+    logger.info(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
 
     time.sleep(wait_seconds)
 
@@ -364,12 +370,12 @@ def main():
 
         while True:
             liquidation_checker.check()
-            log("Начинаем обновление...")
+            logger.info("Начинаем обновление...")
 
             # Загружаем и проверяем символы
             symbols = load_symbols()
             if not symbols:
-                log("Нет валидных символов для обработки. Ожидаем...", "warning")
+                logger.warning("Нет валидных символов для обработки. Ожидаем...")
                 time.sleep(60)
                 continue
 
@@ -397,24 +403,24 @@ def main():
                 f"❌ С ошибками: {error_count}\n"
                 f"Всего символов: {len(symbols)}"
             )
-            log(summary_msg, "info")
+            logger.info(summary_msg)
 
-            analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message)
+            analyze_pairs(DB_NAME, TIMEZONE, determine_signal, send_signal_message)
             wait_until_next_update()
 
     except KeyboardInterrupt:
-        log("Получен сигнал остановки", "warning")
+        logger.warning("Получен сигнал остановки")
         position_monitor.stop_all_timers()
         #liquidation_ws.stop()
         #ws_manager.stop()
     except Exception as e:
-        log(f"КРИТИЧЕСКАЯ ОШИБКА: {str(e)}", "error")
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА: {str(e)}")
     finally:
         timer_storage.close()
         #ws_manager.stop()
         #liquidation_ws.stop()
-        log("Мониторинг позиций остановлен", "info")
-        log("Работа бота завершена", "success")
+        logger.info("Мониторинг позиций остановлен")
+        logger.info("Работа бота завершена")
 
 
 if __name__ == "__main__":

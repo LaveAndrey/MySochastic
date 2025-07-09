@@ -3,17 +3,20 @@ from datetime import datetime
 from decimal import ROUND_DOWN
 from decimal import Decimal
 from typing import Tuple
-
 import os
+
+import logging
+logger = logging.getLogger(__name__)
+
 DB_NAME = os.path.abspath("positions.db")  # Путь будет одинаковым везде
 
 def init_db():
     """Инициализация базы данных с отдельными таблицами для SPOT и SHORT позиций"""
     try:
-        print(f"[INFO] 🔧 Начинаем инициализацию БД: {DB_NAME}")
+        logger.info(f"[INFO] 🔧 Начинаем инициализацию БД: {DB_NAME}")
         with sqlite3.connect(DB_NAME) as conn:
             # Таблица для SPOT-позиций
-            print("[INFO] 🔍 Проверяем таблицу spot_positions...")
+            logger.info("[INFO] 🔍 Проверяем таблицу spot_positions...")
             conn.execute("""
             CREATE TABLE IF NOT EXISTS spot_positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -34,10 +37,10 @@ def init_db():
                 reason TEXT DEFAULT NULL
             )
             """)
-            print("[INFO] ✅ Таблица spot_positions готова")
+            logger.info("[INFO] ✅ Таблица spot_positions готова")
 
             # Таблица для SHORT (маржинальных) позиций
-            print("[INFO] 🔍 Проверяем таблицу short_positions...")
+            logger.info("[INFO] 🔍 Проверяем таблицу short_positions...")
             conn.execute("""
             CREATE TABLE IF NOT EXISTS short_positions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,13 +63,13 @@ def init_db():
                 reason TEXT DEFAULT NULL
             )
             """)
-            print("[INFO] ✅ Таблица short_positions готова")
+            logger.info("[INFO] ✅ Таблица short_positions готова")
 
 
-        print(f"[INFO] 🏁 База данных {DB_NAME} полностью готова к работе")
+        logger.info(f"[INFO] 🏁 База данных {DB_NAME} полностью готова к работе")
 
     except Exception as e:
-        print(f"[ERROR] 🔥 Критическая ошибка при инициализации БД: {e}")
+        logger.error(f"[ERROR] 🔥 Критическая ошибка при инициализации БД: {e}")
 
 
 def get_trade_fee(account_api, inst_id: str) -> dict:
@@ -91,20 +94,20 @@ def get_trade_fee(account_api, inst_id: str) -> dict:
             fee_info = response["data"][0]
             maker_fee = Decimal(fee_info.get("makerFeeRate", "0"))
             taker_fee = Decimal(fee_info.get("takerFeeRate", "0"))
-            print(response)
+            logger.info(response)
             return {"maker": maker_fee, "taker": taker_fee}
         else:
-            print(f"[WARNING] Не удалось получить комиссии для {inst_id}: {response}")
+            logger.warning(f"[WARNING] Не удалось получить комиссии для {inst_id}: {response}")
             return {"maker": Decimal("0"), "taker": Decimal("0")}
     except Exception as e:
-        print(f"[ERROR] Ошибка получения комиссии: {e}")
+        logger.error(f"[ERROR] Ошибка получения комиссии: {e}")
         return {"maker": Decimal("0"), "taker": Decimal("0")}
 
 
 
 def has_open_position(symbol):
     """Проверка наличия открытой позиции в обеих таблицах: spot и short"""
-    print(f"[DEBUG] 🔍 Проверяем открытые позиции для {symbol}")
+    logger.debug(f"[DEBUG] 🔍 Проверяем открытые позиции для {symbol}")
     try:
         with sqlite3.connect(DB_NAME) as conn:
             # Проверка в SPOT
@@ -124,29 +127,29 @@ def has_open_position(symbol):
                     SELECT entry_price, entry_time FROM spot_positions 
                     WHERE symbol=? AND closed=0 LIMIT 1
                 """, (symbol,)).fetchone()
-                print(f"[INFO] ⛔ Открыта SPOT-позиция по {symbol}")
-                print(f"[DEBUG] SPOT: Цена входа={details[0]}, Время={details[1]}")
+                logger.info(f"[INFO] ⛔ Открыта SPOT-позиция по {symbol}")
+                logger.debug(f"[DEBUG] SPOT: Цена входа={details[0]}, Время={details[1]}")
 
             if short_result > 0:
                 details = conn.execute("""
                     SELECT entry_price, entry_time FROM short_positions 
                     WHERE symbol=? AND closed=0 LIMIT 1
                 """, (symbol,)).fetchone()
-                print(f"[INFO] ⛔ Открыта SHORT-позиция по {symbol}")
-                print(f"[DEBUG] SHORT: Цена входа={details[0]}, Время={details[1]}")
+                logger.info(f"[INFO] ⛔ Открыта SHORT-позиция по {symbol}")
+                logger.debug(f"[DEBUG] SHORT: Цена входа={details[0]}, Время={details[1]}")
 
             if spot_result == 0 and short_result == 0:
-                print(f"[DEBUG] ✅ Нет открытых позиций по {symbol}")
+                logger.debug(f"[DEBUG] ✅ Нет открытых позиций по {symbol}")
 
             return (spot_result + short_result) > 0
 
     except Exception as e:
-        print(f"[ERROR] ❌ Ошибка проверки позиции {symbol}: {str(e)}")
+        logger.error(f"[ERROR] ❌ Ошибка проверки позиции {symbol}: {str(e)}")
         return False
 
 def get_price(market_api, ticker):
     """Получение цены с выводом через print"""
-    print(f"[DEBUG] 📊 Запрос цены для {ticker}")
+    logger.debug(f"[DEBUG] 📊 Запрос цены для {ticker}")
     try:
         start_time = datetime.now()
         data = market_api.get_ticker(ticker)
@@ -154,14 +157,14 @@ def get_price(market_api, ticker):
 
         if data.get("code") == "0" and data.get("data"):
             price = float(data["data"][0]["last"])
-            print(f"[INFO] 📈 Цена {ticker}: {price} (время ответа: {response_time:.3f} сек)")
-            print(f"[DEBUG] Полный ответ API: {data}")
+            logger.info(f"[INFO] 📈 Цена {ticker}: {price} (время ответа: {response_time:.3f} сек)")
+            logger.debug(f"[DEBUG] Полный ответ API: {data}")
             return price
         else:
-            print(f"[ERROR] ❌ Ошибка в ответе API: {data}")
+            logger.error(f"[ERROR] ❌ Ошибка в ответе API: {data}")
             return 0.0
     except Exception as e:
-        print(f"[ERROR] 🔥 Ошибка получения цены для {ticker}: {str(e)}")
+        logger.error(f"[ERROR] 🔥 Ошибка получения цены для {ticker}: {str(e)}")
         return 0.0
 
 
@@ -183,8 +186,8 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
         maker_fee: Комиссия мейкера
         taker_fee: Комиссия тейкера
     """
-    print(f"[INFO] 📝 Логируем новую позицию: {symbol} [{position_type}] по цене {price}")
-    print(f"[DEBUG] Параметры:\n"
+    logger.info(f"[INFO] 📝 Логируем новую позицию: {symbol} [{position_type}] по цене {price}")
+    logger.debug(f"[DEBUG] Параметры:\n"
           f"Symbol: {symbol}\n"
           f"Type: {position_type}\n"
           f"Price: {price}\n"
@@ -202,7 +205,7 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
             table = "spot_positions" if position_type.upper() == "SPOT" else "short_positions" if position_type.upper() == "SHORT" else None
 
             if table is None:
-                print(f"[WARNING] ❓ Неизвестный тип позиции: {position_type}. Пропускаем запись.")
+                logger.warning(f"[WARNING] ❓ Неизвестный тип позиции: {position_type}. Пропускаем запись.")
                 return
 
             existing = conn.execute(
@@ -211,7 +214,7 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
             ).fetchone()
 
             if existing:
-                print(f"[INFO] 🚫 Позиция {symbol} уже существует и активна. Пропускаем дублирование.")
+                logger.info(f"[INFO] 🚫 Позиция {symbol} уже существует и активна. Пропускаем дублирование.")
                 return
 
             # Расчет комиссии
@@ -228,7 +231,7 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
                     symbol, price, timestamp, order_id, safe_amount,
                     maker_fee, taker_fee, maker_fee_usdt, taker_fee_usdt
                 ))
-                print(f"[INFO] ✅ SPOT-позиция {symbol} успешно записана")
+                logger.info(f"[INFO] ✅ SPOT-позиция {symbol} успешно записана")
 
             elif position_type.upper() == "SHORT":
                 conn.execute("""
@@ -242,13 +245,13 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
                     safe_amount, side, maker_fee, taker_fee, maker_fee_usdt,
                     taker_fee_usdt
                 ))
-                print(f"[INFO] ✅ SHORT-позиция {symbol} успешно записана")
+                logger.info(f"[INFO] ✅ SHORT-позиция {symbol} успешно записана")
 
     except sqlite3.Error as e:
-        print(f"[ERROR] 🔥 Ошибка SQL при логировании позиции {symbol}: {str(e)}")
+        logger.error(f"[ERROR] 🔥 Ошибка SQL при логировании позиции {symbol}: {str(e)}")
         raise
     except Exception as e:
-        print(f"[ERROR] 🔥 Неожиданная ошибка при логировании {symbol}: {str(e)}")
+        logger.error(f"[ERROR] 🔥 Неожиданная ошибка при логировании {symbol}: {str(e)}")
         raise
 
 
@@ -257,7 +260,7 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
 
 def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, position_monitor, timestamp=None):
     """Размещение ордера на покупку"""
-    print(f"[INFO] Начало процесса покупки {symbol} на сумму {amount_usdt} USDT")
+    logger.info(f"[INFO] Начало процесса покупки {symbol} на сумму {amount_usdt} USDT")
 
     if timestamp is None:
         timestamp = datetime.now().isoformat()
@@ -265,26 +268,26 @@ def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, pos
     formatted_symbol = f"{symbol}-USDT"
 
     if has_open_position(formatted_symbol):
-        print(f"[WARNING] ⏸️ Пропускаем покупку {symbol} - позиция уже открыта")
+        logger.warning(f"[WARNING] ⏸️ Пропускаем покупку {symbol} - позиция уже открыта")
         return False
 
 
-    print("[INFO] 🔄 Получаем текущую цену...")
+    logger.info("[INFO] 🔄 Получаем текущую цену...")
     price = get_price(market_api, formatted_symbol)
     if price == 0:
-        print("[ERROR] ❌ Нулевая цена, отмена покупки")
+        logger.error("[ERROR] ❌ Нулевая цена, отмена покупки")
         return False
 
     amount = Decimal(amount_usdt) / Decimal(price)
     amount_rounded = amount.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
 
     fees = get_trade_fee(account_api, formatted_symbol)
-    print(
+    logger.info(
         f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
 
-    print(f"[INFO] ✉️ Отправляем ордер на покупку {formatted_symbol}...")
+    logger.info(f"[INFO] ✉️ Отправляем ордер на покупку {formatted_symbol}...")
     try:
-        print(f"[DEBUG] Размещение SPOT-ордера на сумму: {amount_usdt} USDT")
+        logger.debug(f"[DEBUG] Размещение SPOT-ордера на сумму: {amount_usdt} USDT")
         order = trade_api.place_order(  # Закрывающая скобка была пропущена
             instId=formatted_symbol,
             tdMode="cash",
@@ -295,7 +298,7 @@ def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, pos
 
         if order.get("code") == "0" and order.get("data"):
             ord_id = order["data"][0].get("ordId")
-            print(f"[INFO] Успешная покупка {formatted_symbol}! Order ID: {ord_id}")
+            logger.info(f"[INFO] Успешная покупка {formatted_symbol}! Order ID: {ord_id}")
             log_position(formatted_symbol, "SPOT", price, timestamp, ord_id, amount=float(amount_rounded),maker_fee=float(fees['maker']),taker_fee=float(fees['taker']))
 
             # Запускаем мониторинг позиции
@@ -303,7 +306,7 @@ def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, pos
             return True
 
     except Exception as e:
-        print(f"[ERROR] 🔥 Критическая ошибка при покупке: {str(e)}")
+        logger.error(f"[ERROR] 🔥 Критическая ошибка при покупке: {str(e)}")
 
     return False
 
@@ -316,7 +319,7 @@ def get_swap_contract(symbol: str, market_api, account_api) -> dict:
         contracts = account_api.get_instruments(instType="SWAP")
         for contract in contracts.get("data", []):
             if contract["instId"].startswith(f"{symbol.upper()}-USDT"):
-                print(contract)
+                logger.info(contract)
                 return contract
         raise ValueError(f"Контракт для {symbol} не найден")
     except Exception as e:
@@ -324,7 +327,7 @@ def get_swap_contract(symbol: str, market_api, account_api) -> dict:
 
 def _get_contract_balance(symbol: str, account_api) -> Tuple[Decimal, str]:
     try:
-        print(f"Запрос позиций для {symbol}...")
+        logger.info(f"Запрос позиций для {symbol}...")
         res = account_api.get_positions(instType="SWAP")
         if res.get("code") == "0":
             for position in res.get("data", []):
@@ -334,7 +337,7 @@ def _get_contract_balance(symbol: str, account_api) -> Tuple[Decimal, str]:
                     pos_side = position.get("posSide", "net")
                     return Decimal(pos_amount_str), pos_side
     except Exception as e:
-        print(f"Ошибка при получении позиций: {e}")
+        logger.error(f"Ошибка при получении позиций: {e}")
     return Decimal("0"), "net"
 def place_sell_order(
         trade_api,
@@ -365,23 +368,23 @@ def place_sell_order(
     try:
         # 0. Форматируем символ для OKX
         formatted_symbol = f"{symbol}-USDT-SWAP"
-        print(f"[INFO] 🚀 Начало размещения SHORT позиции для {formatted_symbol}")
+        logger.info(f"[INFO] 🚀 Начало размещения SHORT позиции для {formatted_symbol}")
 
         # 1. Проверяем нет ли уже открытой позиции
         if has_open_position(formatted_symbol):
-            print(f"[WARNING] ⏸️ Пропускаем продажу {symbol} - позиция уже открыта")
+            logger.warning(f"[WARNING] ⏸️ Пропускаем продажу {symbol} - позиция уже открыта")
             return False
 
         # 2. Получаем данные контракта
-        print(f"[INFO] 🔍 Получение данных контракта для {formatted_symbol}...")
+        logger.info(f"[INFO] 🔍 Получение данных контракта для {formatted_symbol}...")
         contract = get_swap_contract(symbol, market_api, account_api)
         if not contract:
-            print(f"[ERROR] ❌ Контракт для {formatted_symbol} не найден")
+            logger.error(f"[ERROR] ❌ Контракт для {formatted_symbol} не найден")
             return False
 
         # Получаем комиссии
         fees = get_trade_fee(account_api, formatted_symbol)
-        print(
+        logger.info(
             f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
 
         # 3. Устанавливаем плечо
@@ -393,14 +396,14 @@ def place_sell_order(
         )
         if leverage_res.get('code') != '0':
             raise ValueError(f"Ошибка установки плеча: {leverage_res.get('msg')}")
-        print(f"[INFO] ✅ Плечо {leverage}x установлено")
+        logger.info(f"[INFO] ✅ Плечо {leverage}x установлено")
 
         # 4. Получаем текущую цену
         ticker = market_api.get_ticker(formatted_symbol)
         if ticker.get('code') != '0':
             raise ValueError(f"Ошибка получения цены: {ticker.get('msg')}")
         current_price = Decimal(ticker['data'][0]['last'])
-        print(f"[INFO] 💵 Текущая цена: {current_price}")
+        logger.info(f"[INFO] 💵 Текущая цена: {current_price}")
 
         # 5. Расчёт количества контрактов: USDT / (цена * размер_контракта)
         def calculate_size():
@@ -426,7 +429,7 @@ def place_sell_order(
         if available_balance < required_margin:
             return False
 
-        print(f"[INFO] 📤 Отправка ордера на продажу...")
+        logger.info(f"[INFO] 📤 Отправка ордера на продажу...")
         order = trade_api.place_order(
             instId=formatted_symbol,
             tdMode="isolated",
@@ -438,7 +441,7 @@ def place_sell_order(
 
         if order.get('code') != '0':
             error_data = order.get('data', [{}])[0]
-            print(f"""
+            logger.error(f"""
             [ERROR] Ошибка ордера:
             Код: {order.get('code')}
             Сообщение: {order.get('msg')}
@@ -447,7 +450,7 @@ def place_sell_order(
             return False
 
         order_id = order['data'][0].get('ordId')
-        print(f"[INFO] 🎉 Ордер успешно размещен. ID: {order_id}")
+        logger.info(f"[INFO] 🎉 Ордер успешно размещен. ID: {order_id}")
 
 
         log_position(
@@ -464,14 +467,14 @@ def place_sell_order(
         )
 
         position_monitor._start_timer(formatted_symbol, position_monitor.close_after_seconds)
-        print(f"[SUCCESS] ✅ SHORT позиция по {formatted_symbol} успешно открыта со стоп-лоссом")
+        logger.info(f"[SUCCESS] ✅ SHORT позиция по {formatted_symbol} успешно открыта со стоп-лоссом")
 
         return True
 
     except ValueError as ve:
-        print(f"[ERROR] ❌ Ошибка валидации: {str(ve)}")
+        logger.error(f"[ERROR] ❌ Ошибка валидации: {str(ve)}")
         return False
     except Exception as e:
-        print(f"[ERROR] 🔥 Критическая ошибка: {str(e)}")
+        logger.error(f"[ERROR] 🔥 Критическая ошибка: {str(e)}")
         return False
 

@@ -1,15 +1,17 @@
 import sqlite3
 from datetime import datetime
+import logging
 
+logger = logging.getLogger(__name__)
 
-def analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message):
+def analyze_pairs(DB_NAME, TIMEZONE, determine_signal, send_signal_message):
     with sqlite3.connect(DB_NAME) as conn:
         cursor = conn.cursor()
 
         # Используем единую таблицу signals вместо daily таблиц
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='signals'")
         if not cursor.fetchone():
-            log("Таблица signals не найдена для анализа", "warning")
+            logger.warning("Таблица signals не найдена для анализа")
             return
 
         cursor.execute("SELECT DISTINCT symbol FROM signals")
@@ -58,6 +60,6 @@ def analyze_pairs(DB_NAME, TIMEZONE, log, determine_signal, send_signal_message)
 
                     send_signal_message(symbol, signal, k_old, k_new, ts_old, ts_new)
 
-            log(f"{symbol}: Анализ {ts_old} -> {ts_new} | %K {k_old:.2f} -> {k_new:.2f} | Сигнал: {signal}")
+            logger.info(f"{symbol}: Анализ {ts_old} -> {ts_new} | %K {k_old:.2f} -> {k_new:.2f} | Сигнал: {signal}")
 
         conn.commit()

@@ -11,6 +11,10 @@ from TimerStorage import TimerStorage
 from DatabaseManger import DatabaseManager
 from config import LEVERAGE
 
+
+import logging
+logger = logging.getLogger(__name__)
+
 class PositionMonitor:
     def __init__(self, trade_api, account_api, market_api, close_after_minutes, profit_threshold,
                  on_position_closed=None, timer_storage=None, sheet_logger=None, db_path="positions.db"):
@@ -38,7 +42,7 @@ class PositionMonitor:
         self.timer_storage = timer_storage or TimerStorage()
         self._restore_timers()
         self.db = DatabaseManager(db_path)
-        print(
+        logger.info(
             f"Инициализирован монитор позиций: авто-закрытие через {close_after_minutes} мин, цель прибыли {profit_threshold}%")
 
     def _restore_timers(self):
@@ -60,14 +64,14 @@ class PositionMonitor:
             remaining = self.close_after_seconds - real_elapsed
 
             if remaining <= 0:
-                print(f"[Timer] Время таймера по {symbol} истекло при восстановлении, закрываем позицию...")
+                logger.info(f"[Timer] Время таймера по {symbol} истекло при восстановлении, закрываем позицию...")
                 pos_type = self._get_position_type(symbol)
                 self._close_position(symbol, pos_type)
                 self.timer_storage.close_position(symbol)
             else:
                 # Запускаем таймер с оставшимся временем
                 self._start_timer(symbol, remaining)
-                print(f"[Timer] Восстановлен таймер {symbol}, осталось: {remaining:.1f} сек")
+                logger.info(f"[Timer] Восстановлен таймер {symbol}, осталось: {remaining:.1f} сек")
 
     def _start_timer(self, symbol: str, interval: Optional[float] = None):
         """Запускает таймер, если он ещё не запущен и позиция активна"""
@@ -77,21 +81,21 @@ class PositionMonitor:
         with self.lock:
             if symbol in self.timers:
                 # Таймер уже запущен — не перезапускаем
-                print(f"[Timer] Таймер для {symbol} уже запущен, пропускаем.")
+                logger.info(f"[Timer] Таймер для {symbol} уже запущен, пропускаем.")
                 return
 
             if not self.has_active_position(symbol):
-                print(f"[Timer] Нет активной позиции для {symbol}, таймер не запускаем.")
+                logger.info(f"[Timer] Нет активной позиции для {symbol}, таймер не запускаем.")
                 return
 
             # Проверяем, есть ли позиция в хранилище таймеров
             if self.timer_storage and self.timer_storage.has_position(symbol):
-                print(f"[Timer] Позиция {symbol} уже есть в хранилище таймеров, таймер не перезаписываем.")
+                logger.info(f"[Timer] Позиция {symbol} уже есть в хранилище таймеров, таймер не перезаписываем.")
             else:
                 # Добавляем запись в хранилище с текущим временем
                 if self.timer_storage:
                     self.timer_storage.safe_add_position(symbol, time.time(), 0)
-                    print(f"[Timer] Записали позицию {symbol} в хранилище таймеров.")
+                    logger.info(f"[Timer] Записали позицию {symbol} в хранилище таймеров.")
 
             pos_type = self._get_position_type(symbol)
 
@@ -100,17 +104,17 @@ class PositionMonitor:
             timer.start()
             self.timers[symbol] = timer
 
-            print(f"[Timer] Запущен таймер для {symbol} на {interval:.1f} сек")
+            logger.info(f"[Timer] Запущен таймер для {symbol} на {interval:.1f} сек")
 
     def safe_add_position(self, symbol: str, entry_time: float, elapsed_time: float):
         """Метод для безопасного добавления позиции в таймер-хранилище (дубли не добавляются)"""
         if not self.timer_storage:
             return
         if self.timer_storage.has_position(symbol):
-            print(f"[TimerStorage] Позиция {symbol} уже существует в хранилище — добавление пропущено.")
+            logger.info(f"[TimerStorage] Позиция {symbol} уже существует в хранилище — добавление пропущено.")
             return
         self.timer_storage.safe_add_position(symbol, entry_time, elapsed_time)
-        print(f"[TimerStorage] Позиция {symbol} добавлена в хранилище.")
+        logger.info(f"[TimerStorage] Позиция {symbol} добавлена в хранилище.")
 
     def has_active_position(self, symbol: str) -> bool:
         """Проверка активности позиции"""
@@ -129,7 +133,7 @@ class PositionMonitor:
         for symbol, timer in list(self.timers.items()):
             timer.cancel()
         self.timers.clear()
-        print("Все таймеры остановлены (но сохранены в хранилище)")
+        logger.info("Все таймеры остановлены (но сохранены в хранилище)")
 
     def _round_contract_size(self, symbol: str, amount: Decimal) -> str:
         try:
@@ -140,7 +144,7 @@ class PositionMonitor:
                     rounded = (amount // lot_size) * lot_size
                     return str(rounded.normalize())
         except Exception as e:
-            print(f"Ошибка при округлении размера контракта {symbol}: {e}")
+            logger.error(f"Ошибка при округлении размера контракта {symbol}: {e}")
         return "0"
 
     def _check_position(self, symbol: str, current_price: Optional[Decimal] = None) -> None:
@@ -175,7 +179,7 @@ class PositionMonitor:
                 current_price = Decimal(str(current_price))
 
             if not current_price:
-                print(f"[WARN] Нет текущей цены для {symbol}")
+                logger.warning(f"[WARN] Нет текущей цены для {symbol}")
                 return
 
             # 📊 Расчёт PnL в % по типу позиции
@@ -187,7 +191,7 @@ class PositionMonitor:
                 #print(
                 #    f"[SHORT] {symbol}: {price_change_emoji} {profit_pct:.2f}% (Вход: {entry_price}, Текущая: {current_price})")
             else:
-                print(f"[ERROR] Неизвестный тип позиции {pos_type} по {symbol}")
+                logger.error(f"[ERROR] Неизвестный тип позиции {pos_type} по {symbol}")
                 return
 
             profit_pct = profit_pct.quantize(Decimal("0.01"))
@@ -200,7 +204,7 @@ class PositionMonitor:
                     pnl_data = self._get_spot_pnl_by_symbol(symbol)
 
                 if not pnl_data:
-                    print(f"[SKIP] Не удалось получить точный PnL по {symbol}")
+                    logger.info(f"[SKIP] Не удалось получить точный PnL по {symbol}")
                     return
 
                 net_pnl_usdt, confirmed_pct = pnl_data
@@ -209,7 +213,7 @@ class PositionMonitor:
                 if confirmed_pct < self.profit_threshold:
                     return
 
-                print(f"[CONFIRMED] {symbol}: прибыль {confirmed_pct:.2f}% ≥ {self.profit_threshold}%, ЗАКРЫВАЕМ...")
+                logger.info(f"[CONFIRMED] {symbol}: прибыль {confirmed_pct:.2f}% ≥ {self.profit_threshold}%, ЗАКРЫВАЕМ...")
                 self._close_position(symbol, pos_type, entry_price, current_price, pnl_data, confirmed_pct, reason="target")
                 return
 
@@ -218,7 +222,7 @@ class PositionMonitor:
                 self._start_timer(symbol, self.close_after_seconds)
 
         except Exception as e:
-            print(f"[ERROR] Проверка позиции {symbol} завершилась с ошибкой: {e}")
+            logger.error(f"[ERROR] Проверка позиции {symbol} завершилась с ошибкой: {e}")
 
     def _get_current_price(self, symbol: str) -> Optional[Decimal]:
         """Получает текущую цену с использованием кеша"""
@@ -227,7 +231,7 @@ class PositionMonitor:
                 return self.price_cache[symbol]
 
             data = self.market_api.get_ticker(symbol)
-            print(f"Ответ от OKX для {symbol}: {data}")
+            logger.info(f"Ответ от OKX для {symbol}: {data}")
 
             if data.get("code") == "0" and data.get("data"):
                 price = Decimal(data["data"][0]["last"])
@@ -235,7 +239,7 @@ class PositionMonitor:
                 return price
 
         except Exception as e:
-            print(f"Ошибка при получении цены для {symbol}: {e}")
+            logger.error(f"Ошибка при получении цены для {symbol}: {e}")
         return None
 
     def _get_order_id_from_db(self, symbol: str, pos_type: str) -> Optional[str]:
@@ -247,7 +251,7 @@ class PositionMonitor:
                 """, (symbol,)).fetchone()
                 return row[0] if row else None
         except Exception as e:
-            print(f"Ошибка при получении order_id из БД для {symbol}: {e}")
+            logger.error(f"Ошибка при получении order_id из БД для {symbol}: {e}")
             return None
 
     def _close_position(self, symbol: str, pos_type: str,
@@ -276,24 +280,24 @@ class PositionMonitor:
                     else:
                         reason = "timeout"
 
-            print(f"[DEBUG] Закрытие {symbol} ({pos_type}), reason: {reason}")
+            logger.debug(f"[DEBUG] Закрытие {symbol} ({pos_type}), reason: {reason}")
 
             if not self.has_active_position(symbol):
-                print(f"[Close] Позиция {symbol} уже закрыта, ничего делать не нужно.")
+                logger.info(f"[Close] Позиция {symbol} уже закрыта, ничего делать не нужно.")
                 return
 
             # Проверка — закрыта ли позиция на бирже
             if pos_type == "short":
                 amount, pos_side = self._get_contract_balance(symbol)
                 if amount == 0:
-                    print(f"[INFO] SHORT позиция {symbol} уже закрыта на бирже. Обновляем БД.")
+                    logger.info(f"[INFO] SHORT позиция {symbol} уже закрыта на бирже. Обновляем БД.")
                     self._update_position_in_db(symbol, pos_type, self._get_order_id_from_db(symbol, pos_type), reason)
                     return
             else:
                 base_ccy = symbol.split("-")[0]
                 balance = self._get_balance(base_ccy)
                 if balance == 0:
-                    print(f"[INFO] SPOT позиция {symbol} уже закрыта. Обновляем БД.")
+                    logger.info(f"[INFO] SPOT позиция {symbol} уже закрыта. Обновляем БД.")
                     self._update_position_in_db(symbol, pos_type, self._get_order_id_from_db(symbol, pos_type), reason)
                     return
 
@@ -307,19 +311,19 @@ class PositionMonitor:
                 """, (symbol,)).fetchone()
 
                 if row is None:
-                    print(f"[ERROR] Позиция {symbol} не найдена в таблице {table} или уже закрыта.")
+                    logger.error(f"[ERROR] Позиция {symbol} не найдена в таблице {table} или уже закрыта.")
                     return
 
                 order_id = row[0]
 
-            print(f"[DEBUG] Параметры закрытия позиции {symbol}: Тип={pos_type}, OrderID={order_id}")
+            logger.debug(f"[DEBUG] Параметры закрытия позиции {symbol}: Тип={pos_type}, OrderID={order_id}")
 
             # Закрытие позиции
             if pos_type == "spot":
                 base_ccy = symbol.split("-")[0]
                 balance = self._get_balance(base_ccy)
                 if balance <= 0:
-                    print(f"[ABORT] Невалидный баланс {balance} для SPOT {symbol}.")
+                    logger.warning(f"[ABORT] Невалидный баланс {balance} для SPOT {symbol}.")
                     return
 
                 sz = str(balance.quantize(Decimal('0.00000001')))
@@ -333,7 +337,7 @@ class PositionMonitor:
             else:
                 amount, pos_side = self._get_contract_balance(symbol)
                 if amount <= 0:
-                    print(f"[ABORT] Пустой контрактный баланс SHORT для {symbol}.")
+                    logger.warning(f"[ABORT] Пустой контрактный баланс SHORT для {symbol}.")
                     return
 
                 sz = self._round_contract_size(symbol, amount)
@@ -350,10 +354,10 @@ class PositionMonitor:
             # Проверка результата
             if order.get("code") == "0":
                 if not order.get("data"):
-                    print(f"[WARNING] Ордер закрыт успешно, но нет данных в ответе: {order}")
+                    logger.warning(f"[WARNING] Ордер закрыт успешно, но нет данных в ответе: {order}")
                 else:
                     real_order_id = order["data"][0].get("ordId", order_id)
-                    print(f"[SUCCESS] Ордер на закрытие отправлен: {real_order_id}")
+                    logger.info(f"[SUCCESS] Ордер на закрытие отправлен: {real_order_id}")
                 time.sleep(2)
 
                 self._update_position_in_db(symbol, pos_type, order_id, reason)
@@ -368,14 +372,14 @@ class PositionMonitor:
                     "reason": reason
                 }
 
-                print(f"[DEBUG] Данные для Google Sheets: {data_to_log}")
+                logger.debug(f"[DEBUG] Данные для Google Sheets: {data_to_log}")
 
                 if self.sheet_logger:
                     success = self.sheet_logger.log_closed_position(data_to_log)
                     if not success:
-                        print(f"[WARNING] Не удалось записать позицию {symbol} в Google Sheets")
+                        logger.warning(f"[WARNING] Не удалось записать позицию {symbol} в Google Sheets")
                 else:
-                    print("[WARNING] Логгер Google Sheets не инициализирован")
+                    logger.warning("[WARNING] Логгер Google Sheets не инициализирован")
 
         finally:
             with sqlite3.connect("timers.db") as conn:
@@ -384,14 +388,14 @@ class PositionMonitor:
     def _get_balance(self, currency: str) -> Decimal:
         """Получает доступный баланс валюты для spot"""
         try:
-            print(f"Запрос баланса для {currency}...")
+            logger.info(f"Запрос баланса для {currency}...")
             res = self.account_api.get_account_balance(ccy=currency)
 
             # Добавьте логирование полного ответа
-            print(f"Полный ответ баланса: {res}")
+            logger.info(f"Полный ответ баланса: {res}")
 
             if res.get("code") != "0":
-                print(f"[ERROR] Ошибка при получении баланса: {res.get('msg')} | full: {res}")
+                logger.error(f"[ERROR] Ошибка при получении баланса: {res.get('msg')} | full: {res}")
                 return Decimal("0")
 
             # Для демо-счета путь к данным может отличаться
@@ -406,17 +410,17 @@ class PositionMonitor:
             except InvalidOperation:
                 return Decimal("0")
         except Exception as e:
-            print(f"Ошибка при получении баланса для {currency}: {e}")
+            logger.error(f"Ошибка при получении баланса для {currency}: {e}")
             return Decimal("0")
 
     def _update_position_in_db(self, symbol: str, pos_type: str, order_id: Optional[str], reason: str = None):
         try:
-            print(f"Обновляем позицию в БД для {symbol} ({pos_type}), order_id={order_id}")
+            logger.info(f"Обновляем позицию в БД для {symbol} ({pos_type}), order_id={order_id}")
 
             # Получаем текущую цену
             current_price = self._get_current_price(symbol)
             if not current_price:
-                print(f"[ERROR] Не удалось получить цену для {symbol}")
+                logger.error(f"[ERROR] Не удалось получить цену для {symbol}")
                 current_price = Decimal("0")
 
             # Получаем PnL
@@ -458,7 +462,7 @@ class PositionMonitor:
             # Проверка перед отправкой в Google Таблицы
             for key, value in data_to_log.items():
                 if value is None:
-                    print(f"[WARNING] {key} is None, заменяем на 0")
+                    logger.warning(f"[WARNING] {key} is None, заменяем на 0")
                     data_to_log[key] = 0.0
 
 
@@ -479,7 +483,7 @@ class PositionMonitor:
 
             # Отправляем в Google Таблицы
             if self.sheet_logger:
-                print(f"[DEBUG] Данные для Google Таблиц: {data_to_log}")
+                logger.debug(f"[DEBUG] Данные для Google Таблиц: {data_to_log}")
                 self.sheet_logger.log_closed_position(data_to_log)
 
             if self.on_position_closed:
@@ -492,7 +496,7 @@ class PositionMonitor:
                     reason)
 
         except Exception as e:
-            print(f"Ошибка при обновлении PNL для {symbol}: {str(e)}")
+            logger.error(f"Ошибка при обновлении PNL для {symbol}: {str(e)}")
             traceback.print_exc()
 
     def _get_spot_pnl_by_symbol(self, symbol: str) -> tuple[Decimal, Decimal] | None:
@@ -512,7 +516,7 @@ class PositionMonitor:
             entry_price = Decimal(str(row[0]))
             amount = Decimal(str(row[1]))
             if entry_price <= 0 or amount <= 0:
-                print(f"[ERROR] Некорректные данные в PNL для {symbol}: entry={entry_price}, amount={amount}")
+                logger.error(f"[ERROR] Некорректные данные в PNL для {symbol}: entry={entry_price}, amount={amount}")
                 return None
 
             current_price = self._get_current_price(symbol)
@@ -524,7 +528,7 @@ class PositionMonitor:
             return pnl_usdt, pnl_percent
 
         except Exception as e:
-            print(f"Ошибка при расчёте спот-PNL: {str(e)}")
+            logger.error(f"Ошибка при расчёте спот-PNL: {str(e)}")
             return None
 
     def _get_decimal_safe(self, value) -> Decimal:
@@ -532,7 +536,7 @@ class PositionMonitor:
         try:
             return Decimal(str(value))
         except (InvalidOperation, TypeError, ValueError):
-            print(f"[Decimal Error] Невозможно преобразовать значение: {value}")
+            logger.error(f"[Decimal Error] Невозможно преобразовать значение: {value}")
             return Decimal("0")
 
     def _calculate_fallback_pnl(self, symbol: str) -> Optional[Tuple[Decimal, Decimal]]:
@@ -546,26 +550,26 @@ class PositionMonitor:
                 """, (symbol,)).fetchone()
 
                 if not row:
-                    print(f"[ERROR] Не найдена открытая позиция {symbol} в БД")
+                    logger.error(f"[ERROR] Не найдена открытая позиция {symbol} в БД")
                     return None
 
                 entry_price, amount = Decimal(str(row[0])), Decimal(str(row[1]))
                 current_price = self._get_current_price(symbol)
 
                 if not current_price:
-                    print(f"[ERROR] Не удалось получить текущую цену для {symbol}")
+                    logger.error(f"[ERROR] Не удалось получить текущую цену для {symbol}")
                     return None
 
                 # Расчёт PnL для SHORT
                 pnl_usdt = (entry_price - current_price) * amount
                 pnl_percent = ((entry_price - current_price) / entry_price) * 100 * 4  # 4x плечо
 
-                print(f"[FALLBACK] Расчётный PnL для {symbol}: "
+                logger.info(f"[FALLBACK] Расчётный PnL для {symbol}: "
                       f"{pnl_percent:.2f}% ({pnl_usdt:.4f} USDT)")
                 return pnl_usdt, pnl_percent
 
         except Exception as e:
-            print(f"[ERROR] Ошибка резервного расчёта PnL: {str(e)}")
+            logger.error(f"[ERROR] Ошибка резервного расчёта PnL: {str(e)}")
             return None
 
     def _get_swap_pnl_live(self, symbol: str, max_retries: int = 3) -> Optional[Tuple[Decimal, Decimal]]:
@@ -586,7 +590,7 @@ class PositionMonitor:
                         return upl, upl_ratio
 
                 # Позиция не найдена — бросаем исключение, чтобы задать ошибку
-                print(f"[INFO] Позиция {symbol} не найдена в API (возможно закрыта или ликвидирована).")
+                logger.info(f"[INFO] Позиция {symbol} не найдена в API (возможно закрыта или ликвидирована).")
                 return None
 
 
@@ -597,12 +601,12 @@ class PositionMonitor:
                 retry_count += 1
                 time.sleep(1 * retry_count)
 
-        print(f"[ERROR] Не удалось получить PnL после {max_retries} попыток. Последняя ошибка: {str(last_exception)}")
+        logger.error(f"[ERROR] Не удалось получить PnL после {max_retries} попыток. Последняя ошибка: {str(last_exception)}")
         return None
 
     def _get_contract_balance(self, symbol: str) -> Tuple[Decimal, str]:
         try:
-            print(f"Запрос позиций для {symbol}...")
+            logger.info(f"Запрос позиций для {symbol}...")
             res = self.account_api.get_positions(instType="SWAP")
 
             if res.get("code") == "0":
@@ -612,7 +616,7 @@ class PositionMonitor:
                         pos_side = position.get("posSide", "net")
                         return Decimal(pos_amount_str), pos_side
         except Exception as e:
-            print(f"Ошибка при получении позиций: {e}")
+            logger.error(f"Ошибка при получении позиций: {e}")
         return Decimal("0"), "net"
 
     def _get_realized_pnl(self, symbol: str, pos_type: str) -> Tuple[Decimal, Decimal]:
@@ -640,7 +644,7 @@ class PositionMonitor:
                             pnl_percent = ((current_price - entry_price) / entry_price) * 100
                             return pnl_usdt, pnl_percent
         except Exception as e:
-            print(f"Ошибка при расчёте PNL: {e}")
+            logger.error(f"Ошибка при расчёте PNL: {e}")
         return Decimal("0"), Decimal("0")
 
     def _get_position_type(self, symbol: str) -> str:

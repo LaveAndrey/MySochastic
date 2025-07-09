@@ -1,8 +1,11 @@
 import pandas as pd
 import requests
 from typing import Optional
+import logging
 
-def get_klines(symbol: str, log, TIMEZONE: str, INTERVAL: str, K_PERIOD: int) -> Optional[pd.DataFrame]:
+logger = logging.getLogger(__name__)
+
+def get_klines(symbol: str, TIMEZONE: str, INTERVAL: str, K_PERIOD: int) -> Optional[pd.DataFrame]:
     # Преобразуем символ в формат OKX (например: BTC-USDT)
     okx_symbol = f"{symbol}-USDT"
 
@@ -14,7 +17,7 @@ def get_klines(symbol: str, log, TIMEZONE: str, INTERVAL: str, K_PERIOD: int) ->
     }
     okx_interval = interval_map.get(INTERVAL.lower())
     if not okx_interval:
-        log(f"{symbol}: Неподдерживаемый интервал {INTERVAL}", "error")
+        logger.error(f"{symbol}: Неподдерживаемый интервал {INTERVAL}")
         return None
 
     url = f"https://www.okx.com/api/v5/market/candles?instId={okx_symbol}&bar={okx_interval}&limit={K_PERIOD + 2}"
@@ -25,7 +28,7 @@ def get_klines(symbol: str, log, TIMEZONE: str, INTERVAL: str, K_PERIOD: int) ->
         data = response.json()
 
         if data.get("code") != "0" or not data.get("data"):
-            log(f"{symbol}: Ошибка API OKX: {data.get('msg', 'No data')}", "error")
+            logger.error(f"{symbol}: Ошибка API OKX: {data.get('msg', 'No data')}")
             return None
 
         # Преобразуем в DataFrame
@@ -46,5 +49,5 @@ def get_klines(symbol: str, log, TIMEZONE: str, INTERVAL: str, K_PERIOD: int) ->
         return df[['close_time', 'open', 'high', 'low', 'close']].dropna().iloc[::-1]
 
     except Exception as e:
-        log(f"{symbol}: Ошибка получения свечей с OKX - {e}", "error")
+        logger.error(f"{symbol}: Ошибка получения свечей с OKX - {e}")
         return None

@@ -3,13 +3,16 @@ from datetime import datetime
 from threading import Lock
 from DatabaseManger import DatabaseManager
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 class TimerStorage:
     def __init__(self, db_path="timers.db"):
         self.db = DatabaseManager(db_path)
         self.lock = Lock()
         self._init_db()
-        print(f"TimerStorage инициализирован с базой {db_path}")
+        logger.info(f"TimerStorage инициализирован с базой {db_path}")
 
     def _init_db(self):
         """Инициализация таблицы для хранения активных таймеров"""
@@ -20,7 +23,7 @@ class TimerStorage:
             elapsed_time REAL DEFAULT 0
         )
         """)
-        print("[TimerStorage] Таблица active_timers создана")
+        logger.info("[TimerStorage] Таблица active_timers создана")
 
     def safe_add_position(self, symbol: str, entry_time: float = None, elapsed_time: float = 0) -> bool:
         """
@@ -43,7 +46,7 @@ class TimerStorage:
                 "INSERT INTO active_timers (symbol, entry_time, elapsed_time) VALUES (?, ?, ?)",
                 (symbol, entry_time, elapsed_time)
             )
-            print(f"[Storage] {symbol} - добавлена в хранилище")
+            logger.info(f"[Storage] {symbol} - добавлена в хранилище")
             return True
 
     def update_elapsed_time(self, symbol: str, elapsed: float):
@@ -60,7 +63,7 @@ class TimerStorage:
         DELETE FROM active_timers 
         WHERE symbol = ?
         """, (symbol,))
-        print(f"[TimerStorage] Позиция {symbol} удалена из активных таймеров")
+        logger.info(f"[TimerStorage] Позиция {symbol} удалена из активных таймеров")
 
     def has_position(self, symbol: str) -> bool:
         """Проверяет, есть ли позиция в хранилище"""
@@ -100,13 +103,13 @@ class TimerStorage:
 
                 # Запускаем таймер с оставшимся временем
                 position_monitor._start_timer(symbol, remaining_time)
-                print(f"[TimerStorage] Восстановлен таймер {symbol}, осталось: {remaining_time:.1f} сек")
+                logger.info(f"[TimerStorage] Восстановлен таймер {symbol}, осталось: {remaining_time:.1f} сек")
             else:
-                print(f"[TimerStorage] Таймер {symbol} истек, закрываем позицию")
+                logger.info(f"[TimerStorage] Таймер {symbol} истек, закрываем позицию")
                 self.close_position(symbol)
                 position_monitor._close_position(symbol, pos_type)
 
     def close(self):
         """Корректное закрытие соединения"""
         self.db.close()
-        print("[TimerStorage] Соединение с БД закрыто")
+        logger.info("[TimerStorage] Соединение с БД закрыто")

@@ -2,12 +2,14 @@ import requests
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
 from datetime import datetime
 import time
+import logging
+logger = logging.getLogger(__name__)
 
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
 def log_telegram_event(message: str):
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    print(f"[Telegram] [{timestamp}] {message}")
+    logger.info(f"[Telegram] [{timestamp}] {message}")
 
 def send_telegram_message(text: str, parse_mode: str = "Markdown"):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
