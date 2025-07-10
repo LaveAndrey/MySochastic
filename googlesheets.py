@@ -39,7 +39,8 @@ class GoogleSheetsLogger:
                 round(float(data["close_price"]), 6),
                 round(float(data["pnl_usd"]), 4),
                 round(float(data["pnl_percent"]), 4),
-                data.get("reason", "N/A")
+                data.get("reason", "N/A"),
+                round(float(data["fee"]), 6)
             ]
 
             logger.debug(f"[DEBUG] Типы данных: { {k: type(v) for k, v in data.items()} }")

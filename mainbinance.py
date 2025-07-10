@@ -1,6 +1,7 @@
 import time
 import sqlite3
 import requests
+import pandas as pd
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor
 from get_klines import get_klines
@@ -11,7 +12,6 @@ from dotenv import load_dotenv
 from okx.Trade import TradeAPI
 from okx.Account import AccountAPI
 from okx.MarketData import MarketAPI
-from webdocket.Websocket_manager import CustomWebSocket
 from position_monitor import PositionMonitor
 from decimal import *
 from config import (API_KEY_DEMO as API_KEY,
@@ -29,7 +29,8 @@ from config import (API_KEY_DEMO as API_KEY,
                     CLOSE_AFTER_MINUTES,
                     PROFIT_PERCENT,
                     CREDS_FILE,
-                    SHEET_ID)
+                    SHEET_ID,
+                    UPDATE_TIMES)
 from utils import send_telegram_message
 from TimerStorage import TimerStorage
 from googlesheets import GoogleSheetsLogger
@@ -296,32 +297,32 @@ def process_symbol(symbol: str):
         logger.error(f"Критическая ошибка обработки {symbol}: {str(e)}")
         return "error"
 
-# === Ожидание следующего запуска ===
-#def wait_until_next_update():
-#    now = datetime.now(TIMEZONE)
-#    next_update = min(
-#        (TIMEZONE.localize(datetime.combine(now.date(), t))
-#         for t in UPDATE_TIMES
-#         if TIMEZONE.localize(datetime.combine(now.date(), t)) > now),
-#        default=TIMEZONE.localize(datetime.combine(now.date() + pd.Timedelta(days=1), UPDATE_TIMES[0]))
-#    )
-#    wait_seconds = (next_update - now).total_seconds()
-#    logger.info(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
-#    time.sleep(wait_seconds)
 
-def wait_until_next_update(interval_minutes=3):
+def wait_until_next_update():
     now = datetime.now(TIMEZONE)
-    # Находим ближайшепппе время, кратное interval_minutes
-    minute = (now.minute // interval_minutes + 1) * interval_minutes
-    if minute >= 60:
-        next_update = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
-    else:
-        next_update = now.replace(minute=minute, second=0, microsecond=0)
-
+    next_update = min(
+        (TIMEZONE.localize(datetime.combine(now.date(), t))
+         for t in UPDATE_TIMES
+         if TIMEZONE.localize(datetime.combine(now.date(), t)) > now),
+        default=TIMEZONE.localize(datetime.combine(now.date() + pd.Timedelta(days=1), UPDATE_TIMES[0]))
+    )
     wait_seconds = (next_update - now).total_seconds()
     logger.info(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
-
     time.sleep(wait_seconds)
+
+#def wait_until_next_update(interval_minutes=3):
+#    now = datetime.now(TIMEZONE)
+#    # Находим ближайшепппе время, кратное interval_minutes
+#    minute = (now.minute // interval_minutes + 1) * interval_minutes
+#    if minute >= 60:
+#        next_update = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+#    else:
+#        next_update = now.replace(minute=minute, second=0, microsecond=0)
+#
+#    wait_seconds = (next_update - now).total_seconds()
+#    logger.info(f"Ждем {wait_seconds:.0f} секунд до {next_update.time()}")
+#
+#    time.sleep(wait_seconds)
 
 
 

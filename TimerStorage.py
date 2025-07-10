@@ -2,13 +2,14 @@ import time
 from datetime import datetime
 from threading import Lock
 from DatabaseManger import DatabaseManager
+import os
 
 import logging
 logger = logging.getLogger(__name__)
 
 
 class TimerStorage:
-    def __init__(self, db_path="timers.db"):
+    def __init__(self, db_path=os.path.abspath("timers.db")):
         self.db = DatabaseManager(db_path)
         self.lock = Lock()
         self._init_db()
