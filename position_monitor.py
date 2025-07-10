@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 class PositionMonitor:
     def __init__(self, trade_api, account_api, market_api, close_after_minutes, profit_threshold,
-                 on_position_closed=None, timer_storage=None, sheet_logger=None, db_path="positions.db"):
+                 on_position_closed=None, timer_storage=None, sheet_logger=None, db_path="data/positions.db"):
         """
         Инициализация монитора позиций
 
@@ -118,7 +118,7 @@ class PositionMonitor:
 
     def has_active_position(self, symbol: str) -> bool:
         """Проверка активности позиции"""
-        with sqlite3.connect("positions.db") as conn:
+        with sqlite3.connect("data/positions.db") as conn:
             result = conn.execute("""
                 SELECT 1 FROM (
                     SELECT symbol FROM spot_positions WHERE symbol=? AND closed=0
@@ -150,7 +150,7 @@ class PositionMonitor:
     def _check_position(self, symbol: str, current_price: Optional[Decimal] = None) -> None:
         """Проверяет условия для закрытия SPOT или SHORT позиции по WebSocket"""
         try:
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 if "-SWAP" in symbol:
                     row = conn.execute("""
                         SELECT entry_price, 'short' AS type

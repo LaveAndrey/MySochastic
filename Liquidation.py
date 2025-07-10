@@ -102,10 +102,11 @@ class LiquidationChecker:
             exit_price = Decimal(str(pos_data.get("avgPx", "0")))
             pnl_usdt = Decimal(str(pos_data.get("pnl", "0")))
             pnl_percent = Decimal(str(pos_data.get("pnlRatio", "0"))) * 100
-            amount = Decimal(str(pos_data.get("pos", "0")))
+            amount = Decimal(str(pos_data.get("pos", "0"))),
+            fee = Decimal(str(pos_data.get("fee", "0")))
 
             # Обновляем базу данных
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 # Проверяем, есть ли такая позиция в БД
                 cursor = conn.execute("""
                     SELECT 1 FROM short_positions 
@@ -120,7 +121,7 @@ class LiquidationChecker:
                 conn.execute("""
                     UPDATE short_positions
                     SET closed=1, exit_price=?, pnl_usdt=?, pnl_percent=?,
-                        exit_time=?, reason='liquidation', amount=?
+                        exit_time=?, reason='liquidation', amount=?, fee=?
                     WHERE symbol=? AND closed=0
                 """, (
                     float(exit_price),
@@ -128,6 +129,7 @@ class LiquidationChecker:
                     float(pnl_percent),
                     datetime.utcnow().isoformat(),
                     float(amount),
+                    float(fee),
                     inst_id
                 ))
 
@@ -139,7 +141,8 @@ class LiquidationChecker:
                     float(exit_price),
                     float(pnl_percent),
                     float(pnl_usdt),
-                    "liquidation"
+                    "liquidation",
+                    float(fee)
                 )
 
             # Логирование в Google Sheets
@@ -151,6 +154,7 @@ class LiquidationChecker:
                     "close_price": float(exit_price),
                     "pnl_usd": float(pnl_usdt),
                     "pnl_percent": float(pnl_percent),
+                    "fee": float(fee),
                     "timestamp": datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"),
                     "reason": "liquidation"
                 }

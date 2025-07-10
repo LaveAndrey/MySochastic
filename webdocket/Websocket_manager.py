@@ -36,7 +36,7 @@ class CustomWebSocket:
         """Получаем активные позиции из БД"""
         active = set()
         try:
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 # SHORT позиции
                 short = conn.execute("SELECT symbol FROM short_positions WHERE closed=0")
                 active.update(row[0] for row in short.fetchall())

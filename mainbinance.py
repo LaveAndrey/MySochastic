@@ -75,7 +75,7 @@ def handle_ws_message(data):
     # Оптимизация: получаем все активные позиции одним запросом
     active_positions = set()
     try:
-        with sqlite3.connect("positions.db") as conn:
+        with sqlite3.connect("data/positions.db") as conn:
             conn.row_factory = sqlite3.Row  # Для доступа по имени столбца
             # SPOT + SHORT позиции одним запросом
             cursor = conn.execute("""
