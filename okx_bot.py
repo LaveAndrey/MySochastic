@@ -8,7 +8,7 @@ import os
 import logging
 logger = logging.getLogger(__name__)
 
-DB_NAME = os.path.abspath("positions.db")  # Путь будет одинаковым везде
+DB_NAME = os.path.abspath("data/positions.db")  # Путь будет одинаковым везде
 
 def init_db():
     """Инициализация базы данных с отдельными таблицами для SPOT и SHORT позиций"""

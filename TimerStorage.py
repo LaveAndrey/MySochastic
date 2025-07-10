@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class TimerStorage:
-    def __init__(self, db_path=os.path.abspath("timers.db")):
+    def __init__(self, db_path=os.path.abspath("data/timers.db")):
         self.db = DatabaseManager(db_path)
         self.lock = Lock()
         self._init_db()

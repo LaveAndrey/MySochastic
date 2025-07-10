@@ -5,7 +5,7 @@ import pytz
 from datetime import time as dtime
 
 load_dotenv()
-DB_NAME = os.path.abspath("signals.db")
+DB_NAME = os.path.abspath("data/signals.db")
 COINS_FILE = "coins_list.txt"
 
 # Telegram settings
