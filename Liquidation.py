@@ -6,6 +6,7 @@ import sqlite3
 from typing import Optional, Callable, Dict, Any
 from config import UPDATE_LIQUID
 import logging
+import threading
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,19 @@ class LiquidationChecker:
             logger.error(f"[CRITICAL] Ошибка в LiquidationChecker: {e}")
             traceback.print_exc()
             return False
+
+    def start_background_checking(self, interval: int = 30):
+        def loop():
+            while True:
+                try:
+                    self.check(force=True)
+                except Exception as e:
+                    logger.error(f"[LIQUIDATION BACKGROUND] Ошибка: {e}")
+                time.sleep(interval)
+
+        thread = threading.Thread(target=loop, daemon=True)
+        thread.start()
+        logger.info(f"[LIQUIDATION] ✅ Фоновая проверка запущена каждые {interval} сек.")
 
     def _check_liquidations(self) -> bool:
         """Основная логика проверки ликвидаций"""

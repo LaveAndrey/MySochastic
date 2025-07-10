@@ -30,7 +30,8 @@ from config import (API_KEY_DEMO as API_KEY,
                     PROFIT_PERCENT,
                     CREDS_FILE,
                     SHEET_ID,
-                    UPDATE_TIMES)
+                    UPDATE_TIMES,
+                    UPDATE_LIQUID)
 from utils import send_telegram_message
 from TimerStorage import TimerStorage
 from googlesheets import GoogleSheetsLogger
@@ -346,6 +347,9 @@ def main():
             sheet_logger=sheet_logger,
             timer_storage=timer_storage
         )
+
+        liquidation_checker.start_background_checking(interval=UPDATE_LIQUID)
+
         wait_until_next_update()
         #symbols = load_symbols()
         #okx_symbols = [f"{s}-USDT-SWAP" for s in symbols]  # Только SWAP-контракты
@@ -368,7 +372,6 @@ def main():
         #log("✅ Мониторинг-WebSocket позиций запущен (проверка каждую минуту)", "success")
 
         while True:
-            liquidation_checker.check()
             logger.info("Начинаем обновление...")
 
             # Загружаем и проверяем символы
