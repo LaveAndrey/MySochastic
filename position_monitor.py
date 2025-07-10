@@ -431,6 +431,8 @@ class PositionMonitor:
 
             pnl_usdt, pnl_percent = pnl_data
 
+            fee = self._get_fee_for_position(symbol, pos_type, order_id)
+
             # Получаем entry_price из БД
             with sqlite3.connect("positions.db") as conn:
                 table = "spot_positions" if pos_type == "spot" else "short_positions"
@@ -455,6 +457,7 @@ class PositionMonitor:
                 "close_price": float(current_price),
                 "pnl_usd": float(pnl_usdt) if pnl_usdt else 0.0,
                 "pnl_percent": float(pnl_percent) if pnl_percent else 0.0,
+                "fee": float(fee),
                 "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "reason": reason or ""
             }
@@ -470,7 +473,7 @@ class PositionMonitor:
             with sqlite3.connect("positions.db") as conn:
                 conn.execute(f"""
                     UPDATE {table}
-                    SET pnl_usdt = ?, pnl_percent = ?, exit_price = ?, closed = 1, exit_time = ?, reason = ?
+                    SET pnl_usdt = ?, pnl_percent = ?, exit_price = ?, closed = 1, exit_time = ?, reason = ?, fee = ?
                     WHERE order_id = ?
                 """, (
                     float(pnl_usdt),
@@ -478,7 +481,8 @@ class PositionMonitor:
                     float(current_price),
                     datetime.now().isoformat(),
                     reason,
-                    order_id
+                    float(fee),
+                    order_id,
                 ))
 
             # Отправляем в Google Таблицы
@@ -493,7 +497,8 @@ class PositionMonitor:
                     float(current_price),
                     float(pnl_percent),
                     float(pnl_usdt),
-                    reason)
+                    reason,
+                    float(fee))
 
         except Exception as e:
             logger.error(f"Ошибка при обновлении PNL для {symbol}: {str(e)}")
@@ -655,6 +660,36 @@ class PositionMonitor:
                 (symbol,)
             ).fetchone()
             return "spot" if spot else "short"
+
+    def _get_fee_for_position(self, symbol: str, pos_type: str, order_id: str) -> Decimal:
+        """Получает сумму комиссии для закрытой позиции"""
+        try:
+            if pos_type == "spot":
+                # Ищем в истории сделок (fills) комиссию по конкретному ордеру
+                res = self.trade_api.get_fills(instId=symbol, limit=50)
+                if res.get("code") == "0" and res.get("data"):
+                    for fill in res["data"]:
+                        if fill.get("ordId") == order_id:
+                            fee_str = fill.get("fee", "0")
+                            print(fee_str)
+                            return Decimal(fee_str) if fee_str else Decimal("0")
+            else:
+                # Для SWAP берём последнюю запись из истории позиций
+                res = self.account_api.get_positions_history(instType="SWAP", instId=symbol, limit=5)
+                if res.get("code") == "0" and res.get("data"):
+                    # Можно фильтровать по ordId, если повезёт, иначе просто берём последнюю
+                    for position in res["data"]:
+                        if position.get("ordId") == order_id:
+                            fee_str = position.get("fee", "0")
+                            print(fee_str)
+                            return Decimal(fee_str) if fee_str else Decimal("0")
+                    # fallback: последняя
+                    fee_str = res["data"][0].get("fee", "0")
+                    return Decimal(fee_str) if fee_str else Decimal("0")
+            return Decimal("0")
+        except Exception as e:
+            logger.error(f"Ошибка при получении комиссии для {symbol}: {e}")
+            return Decimal("0")
 
 
 

@@ -30,10 +30,7 @@ def init_db():
                 amount REAL,
                 order_id TEXT,
                 closed INTEGER DEFAULT 0,
-                maker_fee REAL DEFAULT 0,
-                taker_fee REAL DEFAULT 0,
-                maker_fee_usdt REAL DEFAULT 0,
-                taker_fee_usdt REAL DEFAULT 0,
+                fee REAL DEFAULT 0,
                 reason TEXT DEFAULT NULL
             )
             """)
@@ -56,10 +53,7 @@ def init_db():
                 leverage INTEGER DEFAULT 1,
                 amount REAL,
                 side TEXT,
-                maker_fee REAL DEFAULT 0,
-                taker_fee REAL DEFAULT 0,
-                maker_fee_usdt REAL DEFAULT 0,
-                taker_fee_usdt REAL DEFAULT 0,
+                fee REAL DEFAULT 0,
                 reason TEXT DEFAULT NULL
             )
             """)
@@ -70,39 +64,6 @@ def init_db():
 
     except Exception as e:
         logger.error(f"[ERROR] 🔥 Критическая ошибка при инициализации БД: {e}")
-
-
-def get_trade_fee(account_api, inst_id: str) -> dict:
-    """
-    Получить комиссии maker и taker для инструмента OKX.
-    Автоматически определяет instType по inst_id.
-
-    :param account_api: API аккаунта OKX
-    :param inst_id: Например, "BTC-USDT" или "BTC-USDT-SWAP"
-    :return: dict с ключами 'maker' и 'taker' (Decimal), например {'maker': Decimal('0.0005'), 'taker': Decimal('0.001')}
-    """
-    try:
-        # Определяем тип инструмента по окончанию inst_id
-        if inst_id.endswith("-SWAP"):
-            inst_type = "SWAP"
-        else:
-            inst_type = "SPOT"
-
-        response = account_api.get_fee_rates(instType=inst_type, instId=inst_id)
-
-        if response.get("code") == "0" and response.get("data"):
-            fee_info = response["data"][0]
-            maker_fee = Decimal(fee_info.get("makerFeeRate", "0"))
-            taker_fee = Decimal(fee_info.get("takerFeeRate", "0"))
-            logger.info(response)
-            return {"maker": maker_fee, "taker": taker_fee}
-        else:
-            logger.warning(f"[WARNING] Не удалось получить комиссии для {inst_id}: {response}")
-            return {"maker": Decimal("0"), "taker": Decimal("0")}
-    except Exception as e:
-        logger.error(f"[ERROR] Ошибка получения комиссии: {e}")
-        return {"maker": Decimal("0"), "taker": Decimal("0")}
-
 
 
 def has_open_position(symbol):
@@ -169,8 +130,7 @@ def get_price(market_api, ticker):
 
 
 def log_position(symbol, position_type, price, timestamp, order_id, leverage=None,
-                 amount=None, side=None, maker_fee=0.0, taker_fee=0.0,
-                 ):
+                 amount=None, side=None):
     """
     Логирует новую позицию с учетом стоп-лосса для шортов
 
@@ -195,8 +155,7 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
           f"Order ID: {order_id}\n"
           f"Leverage: {leverage}\n"
           f"Amount: {amount}\n"
-          f"Side: {side}\n"
-          f"Maker Fee: {maker_fee}\n")
+          f"Side: {side}\n")
 
     safe_amount = amount if amount is not None else 0.0
 
@@ -217,19 +176,15 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
                 logger.info(f"[INFO] 🚫 Позиция {symbol} уже существует и активна. Пропускаем дублирование.")
                 return
 
-            # Расчет комиссии
-            maker_fee_usdt = float(Decimal(safe_amount) * Decimal(price) * Decimal(maker_fee))
-            taker_fee_usdt = float(Decimal(safe_amount) * Decimal(price) * Decimal(taker_fee))
-
             if position_type.upper() == "SPOT":
                 conn.execute("""
                     INSERT INTO spot_positions 
-                    (symbol, entry_price, entry_time, order_id, amount, 
-                     maker_fee, taker_fee, maker_fee_usdt, taker_fee_usdt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (symbol, entry_price, entry_time, order_id, amount
+                     )
+                    VALUES (?, ?, ?, ?, ?)
                 """, (
                     symbol, price, timestamp, order_id, safe_amount,
-                    maker_fee, taker_fee, maker_fee_usdt, taker_fee_usdt
+
                 ))
                 logger.info(f"[INFO] ✅ SPOT-позиция {symbol} успешно записана")
 
@@ -237,13 +192,11 @@ def log_position(symbol, position_type, price, timestamp, order_id, leverage=Non
                 conn.execute("""
                     INSERT INTO short_positions 
                     (symbol, entry_price, entry_time, order_id, leverage, 
-                     amount, side, maker_fee, taker_fee, maker_fee_usdt, 
-                     taker_fee_usdt)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     amount, side)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
                     symbol, price, timestamp, order_id, leverage,
-                    safe_amount, side, maker_fee, taker_fee, maker_fee_usdt,
-                    taker_fee_usdt
+                    safe_amount, side
                 ))
                 logger.info(f"[INFO] ✅ SHORT-позиция {symbol} успешно записана")
 
@@ -281,9 +234,6 @@ def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, pos
     amount = Decimal(amount_usdt) / Decimal(price)
     amount_rounded = amount.quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
 
-    fees = get_trade_fee(account_api, formatted_symbol)
-    logger.info(
-        f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
 
     logger.info(f"[INFO] ✉️ Отправляем ордер на покупку {formatted_symbol}...")
     try:
@@ -299,7 +249,7 @@ def place_buy_order(trade_api, account_api, market_api, symbol, amount_usdt, pos
         if order.get("code") == "0" and order.get("data"):
             ord_id = order["data"][0].get("ordId")
             logger.info(f"[INFO] Успешная покупка {formatted_symbol}! Order ID: {ord_id}")
-            log_position(formatted_symbol, "SPOT", price, timestamp, ord_id, amount=float(amount_rounded),maker_fee=float(fees['maker']),taker_fee=float(fees['taker']))
+            log_position(formatted_symbol, "SPOT", price, timestamp, ord_id, amount=float(amount_rounded))
 
             # Запускаем мониторинг позиции
             position_monitor._check_position(formatted_symbol, price)
@@ -382,11 +332,6 @@ def place_sell_order(
             logger.error(f"[ERROR] ❌ Контракт для {formatted_symbol} не найден")
             return False
 
-        # Получаем комиссии
-        fees = get_trade_fee(account_api, formatted_symbol)
-        logger.info(
-            f"[INFO] Комиссия по {formatted_symbol} — Maker: {fees['maker'] * 100:.4f}%, Taker: {fees['taker'] * 100:.4f}%")
-
         # 3. Устанавливаем плечо
         leverage_res = account_api.set_leverage(
             instId=formatted_symbol,
@@ -462,8 +407,6 @@ def place_sell_order(
             leverage=leverage,
             amount=float(size),
             side="sell",
-            maker_fee=float(fees['maker']),
-            taker_fee=float(fees['taker']),
         )
 
         position_monitor._start_timer(formatted_symbol, position_monitor.close_after_seconds)

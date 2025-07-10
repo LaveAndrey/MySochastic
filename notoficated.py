@@ -5,7 +5,7 @@ from config import TIMEZONE
 
 
 def send_position_closed_message(symbol: str, entry_price: float, exit_price: float, pnl_percent: float,
-                                 pnl_dollar: float, reason: str = None):
+                                 pnl_dollar: float, reason: str = None, fee: float = 0.0):
     pnl_str = f"{pnl_percent:.2f}%"
     pnl_dol = f"{pnl_dollar:.2f}$"
     pnl_emoji = "💰" if pnl_percent >= 0 else "🔻"
@@ -33,6 +33,7 @@ def send_position_closed_message(symbol: str, entry_price: float, exit_price: fl
         f"💸 Вход: *{entry_price:.4f}* → Выход: *{exit_price:.4f}*\n"
         f"{pnl_emoji} Доходность: *{pnl_str}* и *{pnl_dol}*\n"
         f"⏰ Время: {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"📋 Коммисия: *{fee}*"
         f"📘 {reason_text}"
     )
     send_telegram_message(message)
