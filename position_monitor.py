@@ -245,7 +245,7 @@ class PositionMonitor:
     def _get_order_id_from_db(self, symbol: str, pos_type: str) -> Optional[str]:
         table = "spot_positions" if pos_type == "spot" else "short_positions"
         try:
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 row = conn.execute(f"""
                     SELECT order_id FROM {table} WHERE symbol = ? AND closed = 0 LIMIT 1
                 """, (symbol,)).fetchone()
@@ -302,7 +302,7 @@ class PositionMonitor:
                     return
 
             # Получаем order_id из БД
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 table = "spot_positions" if pos_type == "spot" else "short_positions"
                 row = conn.execute(f"""
                     SELECT order_id FROM {table}
@@ -382,7 +382,7 @@ class PositionMonitor:
                     logger.warning("[WARNING] Логгер Google Sheets не инициализирован")
 
         finally:
-            with sqlite3.connect("timers.db") as conn:
+            with sqlite3.connect("data/timers.db") as conn:
                 conn.execute("DELETE FROM active_timers WHERE symbol=?", (symbol,))
 
     def _get_balance(self, currency: str) -> Decimal:
@@ -434,7 +434,7 @@ class PositionMonitor:
             fee = self._get_fee_for_position(symbol, pos_type, order_id)
 
             # Получаем entry_price из БД
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 table = "spot_positions" if pos_type == "spot" else "short_positions"
                 row = conn.execute(
                     f"SELECT entry_price FROM {table} WHERE order_id = ?",
@@ -470,7 +470,7 @@ class PositionMonitor:
 
 
             # Обновляем БД
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 conn.execute(f"""
                     UPDATE {table}
                     SET pnl_usdt = ?, pnl_percent = ?, exit_price = ?, closed = 1, exit_time = ?, reason = ?, fee = ?
@@ -507,7 +507,7 @@ class PositionMonitor:
     def _get_spot_pnl_by_symbol(self, symbol: str) -> tuple[Decimal, Decimal] | None:
         """Рассчитывает PNL по символу (спот)"""
         try:
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 row = conn.execute("""
                     SELECT entry_price, amount 
                     FROM spot_positions 
@@ -547,7 +547,7 @@ class PositionMonitor:
     def _calculate_fallback_pnl(self, symbol: str) -> Optional[Tuple[Decimal, Decimal]]:
         """Вычисляет PnL на основе данных из БД, если API не ответил"""
         try:
-            with sqlite3.connect("positions.db") as conn:
+            with sqlite3.connect("data/positions.db") as conn:
                 # Для SWAP-позиций
                 row = conn.execute("""
                     SELECT entry_price, amount FROM short_positions
@@ -635,7 +635,7 @@ class PositionMonitor:
                     return pnl_usdt, pnl_percent
             else:
                 # Для spot-позиций рассчитываем PNL вручную
-                with sqlite3.connect("positions.db") as conn:
+                with sqlite3.connect("data/positions.db") as conn:
                     row = conn.execute("""
                         SELECT entry_price, amount FROM spot_positions
                         WHERE symbol=? AND closed=0 LIMIT 1
