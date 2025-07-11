@@ -654,7 +654,7 @@ class PositionMonitor:
 
     def _get_position_type(self, symbol: str) -> str:
         """Определение типа позиции"""
-        with sqlite3.connect("positions.db") as conn:
+        with sqlite3.connect("data/positions.db") as conn:
             spot = conn.execute(
                 "SELECT 1 FROM spot_positions WHERE symbol=? AND closed=0",
                 (symbol,)
