@@ -116,7 +116,7 @@ class LiquidationChecker:
             exit_price = Decimal(str(pos_data.get("avgPx", "0")))
             pnl_usdt = Decimal(str(pos_data.get("pnl", "0")))
             pnl_percent = Decimal(str(pos_data.get("pnlRatio", "0"))) * 100
-            amount = Decimal(str(pos_data.get("pos", "0"))),
+            amount = Decimal(str(pos_data.get("pos", "0")))
             fee = Decimal(str(pos_data.get("fee", "0")))
 
             # Обновляем базу данных
