@@ -121,7 +121,7 @@ class PositionMonitor:
         with sqlite3.connect("data/positions.db") as conn:
             result = conn.execute("""
                 SELECT 1 FROM (
-                    SELECT symbol FROM spot_positions WHERE symbol=? AND closed=0
+                    SELECT symbol FROM long_positions WHERE symbol=? AND closed=0
                     UNION ALL
                     SELECT symbol FROM short_positions WHERE symbol=? AND closed=0
                 ) LIMIT 1
@@ -148,31 +148,28 @@ class PositionMonitor:
         return "0"
 
     def _check_position(self, symbol: str, current_price: Optional[Decimal] = None) -> None:
-        """Проверяет условия для закрытия SPOT или SHORT позиции по WebSocket"""
+        """Проверяет условия для закрытия LONG или SHORT позиции по WebSocket"""
         try:
             with sqlite3.connect("data/positions.db") as conn:
-                if "-SWAP" in symbol:
                     row = conn.execute("""
                         SELECT entry_price, 'short' AS type
                         FROM short_positions
                         WHERE symbol = ? AND closed = 0
                         LIMIT 1
                     """, (symbol,)).fetchone()
-                else:
-                    row = conn.execute("""
-                        SELECT entry_price, 'spot' AS type
-                        FROM spot_positions
-                        WHERE symbol = ? AND closed = 0
-                        LIMIT 1
-                    """, (symbol,)).fetchone()
 
             if not row:
-                return  # Нет активной позиции
+                row = conn.execute("""
+                    SELECT entry_price, 'long' AS type
+                    FROM long_positions
+                    WHERE symbol = ? AND closed = 0
+                    LIMIT 1
+                """, (symbol,)).fetchone()
 
             entry_price = Decimal(str(row[0]))
             pos_type = row[1]
 
-            # 💰 Получение текущей цены
+            # Получение текущей цены, если не передана
             if current_price is None:
                 current_price = self._get_current_price(symbol)
             else:
@@ -182,27 +179,20 @@ class PositionMonitor:
                 logger.warning(f"[WARN] Нет текущей цены для {symbol}")
                 return
 
-            # 📊 Расчёт PnL в % по типу позиции
-            if pos_type == "spot":
+            # Расчёт PnL в % по типу позиции
+            if pos_type == "long":
                 profit_pct = ((current_price - entry_price) / entry_price) * 100
             elif pos_type == "short":
-                profit_pct = ((entry_price - current_price) / entry_price) * 100 * Decimal(str(LEVERAGE))  # 4x плечо
-                #price_change_emoji = "📉" if profit_pct >= 0 else "📈"
-                #print(
-                #    f"[SHORT] {symbol}: {price_change_emoji} {profit_pct:.2f}% (Вход: {entry_price}, Текущая: {current_price})")
+                profit_pct = ((entry_price - current_price) / entry_price) * 100 * Decimal(str(LEVERAGE))
             else:
                 logger.error(f"[ERROR] Неизвестный тип позиции {pos_type} по {symbol}")
                 return
 
             profit_pct = profit_pct.quantize(Decimal("0.01"))
 
-            # 🎯 Подтверждение прибыли через точный PnL
+            # Подтверждение прибыли через точный PnL
             if profit_pct >= self.profit_threshold:
-                if pos_type == "short":
-                    pnl_data = self._get_swap_pnl_live(symbol)
-                else:
-                    pnl_data = self._get_spot_pnl_by_symbol(symbol)
-
+                pnl_data = self._get_swap_pnl_live(symbol)
                 if not pnl_data:
                     logger.info(f"[SKIP] Не удалось получить точный PnL по {symbol}")
                     return
@@ -213,11 +203,13 @@ class PositionMonitor:
                 if confirmed_pct < self.profit_threshold:
                     return
 
-                logger.info(f"[CONFIRMED] {symbol}: прибыль {confirmed_pct:.2f}% ≥ {self.profit_threshold}%, ЗАКРЫВАЕМ...")
-                self._close_position(symbol, pos_type, entry_price, current_price, pnl_data, confirmed_pct, reason="target")
+                logger.info(
+                    f"[CONFIRMED] {symbol}: прибыль {confirmed_pct:.2f}% ≥ {self.profit_threshold}%, ЗАКРЫВАЕМ...")
+                self._close_position(symbol, pos_type, entry_price, current_price, pnl_data, confirmed_pct,
+                                     reason="target")
                 return
 
-            # ⏱ Таймер (если ещё не установлен)
+            # Запуск таймера, если ещё нет
             if symbol not in self.timers:
                 self._start_timer(symbol, self.close_after_seconds)
 
@@ -243,7 +235,7 @@ class PositionMonitor:
         return None
 
     def _get_order_id_from_db(self, symbol: str, pos_type: str) -> Optional[str]:
-        table = "spot_positions" if pos_type == "spot" else "short_positions"
+        table = "long_positions" if pos_type == "long" else "short_positions"
         try:
             with sqlite3.connect("data/positions.db") as conn:
                 row = conn.execute(f"""
@@ -272,7 +264,7 @@ class PositionMonitor:
 
 
             if reason is None:
-                if pos_type == "spot":
+                if pos_type == "long":
                     reason = "timeout"  # Для SPOT только timeout
                 elif pos_type == "short":
                     if profit_pct and profit_pct >= self.profit_threshold:
@@ -287,23 +279,15 @@ class PositionMonitor:
                 return
 
             # Проверка — закрыта ли позиция на бирже
-            if pos_type == "short":
-                amount, pos_side = self._get_contract_balance(symbol)
-                if amount == 0:
-                    logger.info(f"[INFO] SHORT позиция {symbol} уже закрыта на бирже. Обновляем БД.")
-                    self._update_position_in_db(symbol, pos_type, self._get_order_id_from_db(symbol, pos_type), reason)
-                    return
-            else:
-                base_ccy = symbol.split("-")[0]
-                balance = self._get_balance(base_ccy)
-                if balance == 0:
-                    logger.info(f"[INFO] SPOT позиция {symbol} уже закрыта. Обновляем БД.")
-                    self._update_position_in_db(symbol, pos_type, self._get_order_id_from_db(symbol, pos_type), reason)
-                    return
+            amount, pos_side = self._get_contract_balance(symbol)
+            if amount == 0:
+                logger.info(f"[INFO] {pos_type.upper()} позиция {symbol} уже закрыта на бирже. Обновляем БД.")
+                self._update_position_in_db(symbol, pos_type, self._get_order_id_from_db(symbol, pos_type), reason)
+                return
 
             # Получаем order_id из БД
             with sqlite3.connect("data/positions.db") as conn:
-                table = "spot_positions" if pos_type == "spot" else "short_positions"
+                table = "long_positions" if pos_type == "long" else "short_positions"
                 row = conn.execute(f"""
                     SELECT order_id FROM {table}
                     WHERE symbol = ? AND closed = 0
@@ -319,37 +303,25 @@ class PositionMonitor:
             logger.debug(f"[DEBUG] Параметры закрытия позиции {symbol}: Тип={pos_type}, OrderID={order_id}")
 
             # Закрытие позиции
-            if pos_type == "spot":
-                base_ccy = symbol.split("-")[0]
-                balance = self._get_balance(base_ccy)
-                if balance <= 0:
-                    logger.warning(f"[ABORT] Невалидный баланс {balance} для SPOT {symbol}.")
-                    return
-
-                sz = str(balance.quantize(Decimal('0.00000001')))
-                order = self.trade_api.place_order(
-                    instId=symbol,
-                    tdMode="cash",
-                    side="sell",
-                    ordType="market",
-                    sz=sz
-                )
-            else:
-                amount, pos_side = self._get_contract_balance(symbol)
+            if pos_type in ("long", "short"):
                 if amount <= 0:
-                    logger.warning(f"[ABORT] Пустой контрактный баланс SHORT для {symbol}.")
+                    logger.warning(f"[ABORT] Пустой контрактный баланс {pos_type.upper()} для {symbol}.")
                     return
 
                 sz = self._round_contract_size(symbol, amount)
                 order = self.trade_api.place_order(
                     instId=symbol,
                     tdMode="isolated",
-                    side="buy" if pos_side == "short" else "sell",
+                    side="sell" if pos_type == "long" else "buy",  # Закрываем long — sell, short — buy
                     posSide=pos_side,
                     ordType="market",
                     sz=sz,
                     reduceOnly=True
                 )
+
+            else:
+                logger.error(f"[ERROR] Неизвестный тип позиции при закрытии: {pos_type}")
+                return
 
             # Проверка результата
             if order.get("code") == "0":
@@ -382,8 +354,11 @@ class PositionMonitor:
                     logger.warning("[WARNING] Логгер Google Sheets не инициализирован")
 
         finally:
-            with sqlite3.connect("data/timers.db") as conn:
-                conn.execute("DELETE FROM active_timers WHERE symbol=?", (symbol,))
+            try:
+                with sqlite3.connect("data/timers.db") as conn:
+                    conn.execute("DELETE FROM active_timers WHERE symbol=?", (symbol,))
+            except Exception as e:
+                logger.error(f"[ERROR] ❌ Ошибка при удалении таймера из timers.db: {e}")
 
     def _get_balance(self, currency: str) -> Decimal:
         """Получает доступный баланс валюты для spot"""
@@ -423,11 +398,7 @@ class PositionMonitor:
                 logger.error(f"[ERROR] Не удалось получить цену для {symbol}")
                 current_price = Decimal("0")
 
-            # Получаем PnL
-            if pos_type == "spot":
-                pnl_data = self._get_spot_pnl_by_symbol(symbol) or (Decimal("0"), Decimal("0"))
-            else:
-                pnl_data = self._get_realized_pnl(symbol, pos_type)
+            pnl_data = self._get_realized_pnl(symbol, pos_type)
 
             pnl_usdt, pnl_percent = pnl_data
 
@@ -435,7 +406,7 @@ class PositionMonitor:
 
             # Получаем entry_price из БД
             with sqlite3.connect("data/positions.db") as conn:
-                table = "spot_positions" if pos_type == "spot" else "short_positions"
+                table = "long_positions" if pos_type == "long" else "short_positions"
                 row = conn.execute(
                     f"SELECT entry_price FROM {table} WHERE order_id = ?",
                     (order_id,)
@@ -504,78 +475,6 @@ class PositionMonitor:
             logger.error(f"Ошибка при обновлении PNL для {symbol}: {str(e)}")
             traceback.print_exc()
 
-    def _get_spot_pnl_by_symbol(self, symbol: str) -> tuple[Decimal, Decimal] | None:
-        """Рассчитывает PNL по символу (спот)"""
-        try:
-            with sqlite3.connect("data/positions.db") as conn:
-                row = conn.execute("""
-                    SELECT entry_price, amount 
-                    FROM spot_positions 
-                    WHERE symbol = ? AND closed = 0
-                    LIMIT 1
-                """, (symbol,)).fetchone()
-
-            if not row:
-                return None
-
-            entry_price = Decimal(str(row[0]))
-            amount = Decimal(str(row[1]))
-            if entry_price <= 0 or amount <= 0:
-                logger.error(f"[ERROR] Некорректные данные в PNL для {symbol}: entry={entry_price}, amount={amount}")
-                return None
-
-            current_price = self._get_current_price(symbol)
-            if not current_price:
-                return None
-
-            pnl_usdt = (current_price - entry_price) * amount
-            pnl_percent = ((current_price - entry_price) / entry_price) * 100
-            return pnl_usdt, pnl_percent
-
-        except Exception as e:
-            logger.error(f"Ошибка при расчёте спот-PNL: {str(e)}")
-            return None
-
-    def _get_decimal_safe(self, value) -> Decimal:
-        """Безопасно преобразует значение в Decimal, возвращает 0, если не удалось"""
-        try:
-            return Decimal(str(value))
-        except (InvalidOperation, TypeError, ValueError):
-            logger.error(f"[Decimal Error] Невозможно преобразовать значение: {value}")
-            return Decimal("0")
-
-    def _calculate_fallback_pnl(self, symbol: str) -> Optional[Tuple[Decimal, Decimal]]:
-        """Вычисляет PnL на основе данных из БД, если API не ответил"""
-        try:
-            with sqlite3.connect("data/positions.db") as conn:
-                # Для SWAP-позиций
-                row = conn.execute("""
-                    SELECT entry_price, amount FROM short_positions
-                    WHERE symbol = ? AND closed = 0 LIMIT 1
-                """, (symbol,)).fetchone()
-
-                if not row:
-                    logger.error(f"[ERROR] Не найдена открытая позиция {symbol} в БД")
-                    return None
-
-                entry_price, amount = Decimal(str(row[0])), Decimal(str(row[1]))
-                current_price = self._get_current_price(symbol)
-
-                if not current_price:
-                    logger.error(f"[ERROR] Не удалось получить текущую цену для {symbol}")
-                    return None
-
-                # Расчёт PnL для SHORT
-                pnl_usdt = (entry_price - current_price) * amount
-                pnl_percent = ((entry_price - current_price) / entry_price) * 100 * 4  # 4x плечо
-
-                logger.info(f"[FALLBACK] Расчётный PnL для {symbol}: "
-                      f"{pnl_percent:.2f}% ({pnl_usdt:.4f} USDT)")
-                return pnl_usdt, pnl_percent
-
-        except Exception as e:
-            logger.error(f"[ERROR] Ошибка резервного расчёта PnL: {str(e)}")
-            return None
 
     def _get_swap_pnl_live(self, symbol: str, max_retries: int = 3) -> Optional[Tuple[Decimal, Decimal]]:
         retry_count = 0
@@ -626,66 +525,43 @@ class PositionMonitor:
 
     def _get_realized_pnl(self, symbol: str, pos_type: str) -> Tuple[Decimal, Decimal]:
         try:
-            if pos_type == "short":
+            if pos_type in ("short", "long"):
                 res = self.account_api.get_positions_history(instType="SWAP", instId=symbol)
                 if res.get("code") == "0" and res.get("data"):
                     last_closed = res["data"][0]
                     pnl_usdt = Decimal(last_closed.get("pnl", "0"))
                     pnl_percent = Decimal(last_closed.get("pnlRatio", "0")) * 100
                     return pnl_usdt, pnl_percent
-            else:
-                # Для spot-позиций рассчитываем PNL вручную
-                with sqlite3.connect("data/positions.db") as conn:
-                    row = conn.execute("""
-                        SELECT entry_price, amount FROM spot_positions
-                        WHERE symbol=? AND closed=0 LIMIT 1
-                    """, (symbol,)).fetchone()
-                    if row:
-                        entry_price = Decimal(str(row[0]))
-                        amount = Decimal(str(row[1]))
-                        current_price = self._get_current_price(symbol)
-                        if current_price:
-                            pnl_usdt = (current_price - entry_price) * amount
-                            pnl_percent = ((current_price - entry_price) / entry_price) * 100
-                            return pnl_usdt, pnl_percent
+            # Если позиция не short или long — возвращаем 0
+            return Decimal("0"), Decimal("0")
         except Exception as e:
-            logger.error(f"Ошибка при расчёте PNL: {e}")
-        return Decimal("0"), Decimal("0")
+            logger.error(f"Ошибка при расчёте PNL для {symbol} ({pos_type}): {e}")
+            return Decimal("0"), Decimal("0")
 
     def _get_position_type(self, symbol: str) -> str:
         """Определение типа позиции"""
         with sqlite3.connect("data/positions.db") as conn:
             spot = conn.execute(
-                "SELECT 1 FROM spot_positions WHERE symbol=? AND closed=0",
+                "SELECT 1 FROM long_positions WHERE symbol=? AND closed=0",
                 (symbol,)
             ).fetchone()
-            return "spot" if spot else "short"
+            return "long" if spot else "short"
 
     def _get_fee_for_position(self, symbol: str, pos_type: str, order_id: str) -> Decimal:
-        """Получает сумму комиссии для закрытой позиции"""
+        """Получает сумму комиссии для закрытой позиции (только SWAP)"""
         try:
-            if pos_type == "spot":
-                # Ищем в истории сделок (fills) комиссию по конкретному ордеру
-                res = self.trade_api.get_fills(instId=symbol, limit=50)
-                if res.get("code") == "0" and res.get("data"):
-                    for fill in res["data"]:
-                        if fill.get("ordId") == order_id:
-                            fee_str = fill.get("fee", "0")
-                            print(fee_str)
-                            return Decimal(fee_str) if fee_str else Decimal("0")
-            else:
-                # Для SWAP берём последнюю запись из истории позиций
-                res = self.account_api.get_positions_history(instType="SWAP", instId=symbol, limit=5)
-                if res.get("code") == "0" and res.get("data"):
-                    # Можно фильтровать по ordId, если повезёт, иначе просто берём последнюю
-                    for position in res["data"]:
-                        if position.get("ordId") == order_id:
-                            fee_str = position.get("fee", "0")
-                            print(fee_str)
-                            return Decimal(fee_str) if fee_str else Decimal("0")
-                    # fallback: последняя
-                    fee_str = res["data"][0].get("fee", "0")
-                    return Decimal(fee_str) if fee_str else Decimal("0")
+            # Для SWAP берём последнюю запись из истории позиций
+            res = self.account_api.get_positions_history(instType="SWAP", instId=symbol, limit=5)
+            if res.get("code") == "0" and res.get("data"):
+                # Ищем позицию по order_id
+                for position in res["data"]:
+                    if position.get("ordId") == order_id:
+                        fee_str = position.get("fee", "0")
+                        print(fee_str)
+                        return Decimal(fee_str) if fee_str else Decimal("0")
+                # fallback: берём последнюю запись, если конкретный order_id не найден
+                fee_str = res["data"][0].get("fee", "0")
+                return Decimal(fee_str) if fee_str else Decimal("0")
             return Decimal("0")
         except Exception as e:
             logger.error(f"Ошибка при получении комиссии для {symbol}: {e}")

@@ -24,6 +24,7 @@ IS_DEMO = "0"
 MAX_WORKERS = 10
 AMOUNT_USDT = os.getenv('AMOUNT_USDT')
 LEVERAGE = int(os.getenv('LEVERAGE'))
+LEVERAGE_LONG = int(os.getenv('LEVERAGE_LONG'))
 CLOSE_AFTER_MINUTES = int(os.getenv('CLOSE_AFTER_MINUTES'))
 PROFIT_PERCENT = float(os.getenv('PROFIT_PERCENT'))
 UPDATE_LIQUID = int(os.getenv('UPDATE_LIQUID'))

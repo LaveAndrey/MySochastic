@@ -11,19 +11,12 @@ def send_position_closed_message(symbol: str, entry_price: float, exit_price: fl
     pnl_emoji = "💰" if pnl_percent >= 0 else "🔻"
 
     # Определяем понятное описание причины
-    if "-SWAP" not in symbol:
-        reason_mapping = {
-            "timeout": "🕒 Истекло время удержания",
-            None: "🔚 Позиция закрыта"
-        }
-    # SHORT: timeout, target, liquidation или None
-    else:
-        reason_mapping = {
-            "timeout": "🕒 Истекло время удержания",
-            "target": "🎯 Достигнут целевой уровень прибыли",
-            "liquidation": "💀 Ликвидация",
-            None: "🔚 Позиция закрыта"
-        }
+    reason_mapping = {
+        "timeout": "🕒 Истекло время удержания",
+        "target": "🎯 Достигнут целевой уровень прибыли",
+        "liquidation": "💀 Ликвидация",
+        None: "🔚 Позиция закрыта"
+    }
 
     reason_text = reason_mapping.get(reason, f"Причина: {reason}")  # fallback для неожиданных причин
 
@@ -33,7 +26,7 @@ def send_position_closed_message(symbol: str, entry_price: float, exit_price: fl
         f"💸 Вход: *{entry_price:.4f}* → Выход: *{exit_price:.4f}*\n"
         f"{pnl_emoji} Доходность: *{pnl_str}* и *{pnl_dol}*\n"
         f"⏰ Время: {datetime.now(TIMEZONE).strftime('%Y-%m-%d %H:%M:%S')}\n"
-        f"📋 Коммисия: *{fee}*"
+        f"📋 Комиссия: *{fee}*\n"
         f"📘 {reason_text}"
     )
     send_telegram_message(message)

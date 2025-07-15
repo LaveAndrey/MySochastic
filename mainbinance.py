@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from get_klines import get_klines
 from calculate_k import calculate_k
 from analytiv import analyze_pairs
-from okx_bot import init_db, place_buy_order, place_sell_order
+from okx_bot import init_db, place_long_order, place_sell_order
 from dotenv import load_dotenv
 from okx.Trade import TradeAPI
 from okx.Account import AccountAPI
@@ -26,6 +26,7 @@ from config import (API_KEY_DEMO as API_KEY,
                     IS_DEMO,
                     AMOUNT_USDT,
                     LEVERAGE,
+                    LEVERAGE_LONG,
                     CLOSE_AFTER_MINUTES,
                     PROFIT_PERCENT,
                     CREDS_FILE,
@@ -38,15 +39,20 @@ from googlesheets import GoogleSheetsLogger
 from Liquidation import LiquidationChecker
 from notoficated import send_position_closed_message
 import logging
+import sys
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 
+# Настройка логгирования
 logging.basicConfig(
-    level=logging.INFO,  # вместо INFO
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler('bot.log'),
-        logging.StreamHandler()
+        logging.FileHandler('bot.log', encoding='utf-8'),
+        logging.StreamHandler(sys.stdout)  # Передаём явно stdout
     ]
 )
+
 logger = logging.getLogger(__name__)
 
 
@@ -81,7 +87,7 @@ def handle_ws_message(data):
             # SPOT + SHORT позиции одним запросом
             cursor = conn.execute("""
                 SELECT symbol FROM (
-                    SELECT symbol FROM spot_positions WHERE closed=0
+                    SELECT symbol FROM long_positions WHERE closed=0
                     UNION ALL
                     SELECT symbol FROM short_positions WHERE closed=0
                 )
@@ -234,14 +240,15 @@ def send_signal_message(symbol: str, signal: str, k_prev: float, k_curr: float, 
 
     try:
         if signal == "BUY":
-            success = place_buy_order(
+            success = place_long_order(
                 trade_api=trade_api,
                 account_api=account_api,
                 market_api=market_api,
                 symbol=symbol,
                 amount_usdt=AMOUNT_USDT,
                 position_monitor=position_monitor1,
-                timestamp=datetime.now().isoformat()
+                timestamp=datetime.now().isoformat(),
+                leverage=LEVERAGE_LONG
             )
         elif signal == "SELL":
             success = place_sell_order(
