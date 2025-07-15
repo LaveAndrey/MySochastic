@@ -1,8 +1,9 @@
 import sqlite3
+import time
 from datetime import datetime
 from decimal import ROUND_DOWN
 from decimal import Decimal
-from typing import Tuple
+from typing import Tuple, Optional
 import os
 
 import logging
@@ -56,7 +57,8 @@ def init_db():
                 amount REAL,
                 side TEXT,
                 fee REAL DEFAULT 0,
-                reason TEXT DEFAULT NULL
+                reason TEXT DEFAULT NULL,
+                pos_id TEXT
             )
             """)
             logger.info("[INFO] ✅ Таблица short_positions готова")
@@ -112,7 +114,7 @@ def has_open_position(symbol):
 
 
 def log_position(symbol, position_type, price, timestamp, order_id,
-                 leverage=None, amount=None, side=None):
+                 leverage=None, amount=None, side=None, pos_id=None):
     """
     Логирует новую позицию в таблицу long_positions или short_positions
 
@@ -135,7 +137,8 @@ def log_position(symbol, position_type, price, timestamp, order_id,
                  f"Order ID: {order_id}\n"
                  f"Leverage: {leverage}\n"
                  f"Amount: {amount}\n"
-                 f"Side: {side}\n")
+                 f"Side: {side}\n"
+                 f"Pos ID: {pos_id}")
 
     safe_amount = amount if amount is not None else 0.0
 
@@ -172,11 +175,11 @@ def log_position(symbol, position_type, price, timestamp, order_id,
             elif position_type.upper() == "SHORT":
                 conn.execute(f"""
                     INSERT INTO {table} 
-                    (symbol, entry_price, entry_time, order_id, leverage, amount, side)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (symbol, entry_price, entry_time, order_id, leverage, amount, side, pos_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """, (
                     symbol, price, timestamp, order_id, leverage,
-                    safe_amount, side
+                    safe_amount, side, pos_id
                 ))
                 logger.info(f"[INFO] ✅ SHORT позиция {symbol} успешно записана")
 
@@ -337,6 +340,24 @@ def get_swap_contract(symbol: str, market_api, account_api) -> dict:
     except Exception as e:
         raise RuntimeError(f"Ошибка при получении контракта: {e}")
 
+def fetch_pos_id(account_api, inst_id: str, pos_side: str = "short") -> Optional[str]:
+    """
+    Получить posId открытой позиции по instId и posSide
+    :param account_api: API аккаунта
+    :param inst_id: символ инструмента, например "BTC-USDT-SWAP"
+    :param pos_side: "short" или "long"
+    :return: posId или None если не найдено
+    """
+    res = account_api.get_positions(instType="SWAP", instId=inst_id)
+    if res.get("code") != "0":
+        logger.error(f"[ERROR] Ошибка получения позиций: {res.get('msg')}")
+        return None
+    positions = res.get("data", [])
+    for pos in positions:
+        if pos.get("instId") == inst_id and pos.get("posSide") == pos_side and float(pos.get("pos", "0")) > 0:
+            return pos.get("posId")
+    return None
+
 def place_sell_order(
         trade_api,
         account_api,
@@ -445,6 +466,12 @@ def place_sell_order(
         order_id = order['data'][0].get('ordId')
         logger.info(f"[INFO] 🎉 Ордер успешно размещен. ID: {order_id}")
 
+        time.sleep(2)
+
+        pos_id = fetch_pos_id(account_api, formatted_symbol, pos_side="short")
+        if not pos_id:
+            logger.warning(f"[WARN] Не удалось получить posId для позиции {formatted_symbol}")
+
 
         log_position(
             symbol=formatted_symbol,
@@ -455,6 +482,7 @@ def place_sell_order(
             leverage=leverage,
             amount=float(size),
             side="sell",
+            pos_id=pos_id
         )
 
         position_monitor._start_timer(formatted_symbol, position_monitor.close_after_seconds)

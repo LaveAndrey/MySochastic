@@ -98,8 +98,9 @@ class LiquidationChecker:
         inst_id = pos_data.get("instId")
         ts = pos_data.get("uTime") or pos_data.get("cTime")
         unique_id = f"{inst_id}:{ts}"
+        pos_id = pos_data.get("posId")
 
-        if not inst_id or not ts:
+        if not inst_id or not ts or not pos_id:
             logger.warning(f"[WARN] Некорректные данные ликвидации: {pos_data}")
             return False
 
@@ -124,11 +125,11 @@ class LiquidationChecker:
                 # Проверяем, есть ли такая позиция в БД
                 cursor = conn.execute("""
                     SELECT 1 FROM short_positions 
-                    WHERE symbol=? AND closed=0 LIMIT 1
-                """, (inst_id,))
+                    WHERE pos_id=? AND closed=0 LIMIT 1
+                """, (pos_id,))
 
                 if not cursor.fetchone():
-                    logger.warning(f"[WARN] Ликвидация {inst_id} не найдена в БД")
+                    logger.warning(f"[WARN] Ликвидация {pos_id} не найдена в БД")
                     return False
 
                 # Обновляем позицию
@@ -136,7 +137,7 @@ class LiquidationChecker:
                     UPDATE short_positions
                     SET closed=1, exit_price=?, pnl_usdt=?, pnl_percent=?,
                         exit_time=?, reason='liquidation', amount=?, fee=?
-                    WHERE symbol=? AND closed=0
+                    WHERE pos_id=? AND closed=0
                 """, (
                     float(exit_price),
                     float(pnl_usdt),
@@ -144,7 +145,7 @@ class LiquidationChecker:
                     datetime.utcnow().isoformat(),
                     float(amount),
                     float(fee),
-                    inst_id
+                    pos_id
                 ))
 
             # Уведомление в Telegram
